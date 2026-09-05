@@ -23,6 +23,8 @@
 │   ├── r66s.diffconfig           # R66S 的精简配置（review 用）
 │   ├── .config                   # 单设备兼容 fallback（可选）
 │   └── <device>.config           # 其他设备的 config 文件
+├── patches/                      # 应用到上游源码的 patch（按文件名升序应用）
+│   └── 001-base-files-default-lan-ip.patch  # 默认 LAN 网关 192.168.1.1 → 192.168.100.1
 ├── .gitignore
 └── README.md
 ```
@@ -152,6 +154,30 @@ slug 名只影响 workflow matrix、cache key、artifact 名——不影响 Open
 
 ---
 
+## 添加自定义 patch
+
+如果你要改上游 ImmortalWrt 源码（比如默认 LAN IP、默认主机名、特定包的打补丁），把修改做成 patch 文件放到 `patches/`：
+
+```bash
+# 1. 准备 patch（以 base-files/config_generate 为例）
+mkdir -p patches
+cd /path/to/immortalwrt-checkout  # 你本地 clone 的源码
+# 在源码里手动改好后：
+git diff > ../immortalwrt_autobuild/patches/001-base-files-default-lan-ip.patch
+
+# 2. 文件名排序应用，多个 patch 之间建议用数字前缀
+#    001-…, 002-…, 100-… 等
+
+# 3. 测试 patch 是否能干净 apply（在你的源码 checkout 上）
+patch -p1 --dry-run < ../immortalwrt_autobuild/patches/001-base-files-default-lan-ip.patch
+```
+
+`build.sh` 会在 `feeds update` 后、`make defconfig` 前自动按文件名字母序应用 `patches/*.patch`。如果 patch 应用失败（fuzz 超限或上下文被上游改了），CI 会 fail-fast 并打印哪个 patch 失败。
+
+> **fuzz 容忍**：当前 patch 默认 `--fuzz=0`。如果上游在 patch 上下文附近做了少量改动，可在 `build.sh` 里把 `patch -p1` 改成 `patch -p1 --fuzz=3` 允许 ±3 行偏移。
+
+---
+
 ## 配置选项
 
 ### 切换 ImmortalWrt 分支
@@ -162,9 +188,10 @@ slug 名只影响 workflow matrix、cache key、artifact 名——不影响 Open
 | 定时构建 | 修改 `.github/workflows/build.yml` 里 `env.IMMORTALWRT_BRANCH` 默认值 |
 
 常用分支：
-- `master`：ImmortalWrt 滚动分支，最新但可能不稳定
-- `openwrt-23.05`：基于 OpenWrt 23.05，相对稳定
-- `openwrt-21.02`：旧 LTS
+- `openwrt-25.12`：基于 OpenWrt 25.12（2026-09 更新）
+- `master`：ImmortalWrt 滚动分支（对应未来 OpenWrt 主线）
+
+只暴露这两个，其他分支（24.10 / 23.05 / 21.02）需要时直接改 `env.IMMORTALWRT_BRANCH` 即可。
 
 ### 修改构建参数
 

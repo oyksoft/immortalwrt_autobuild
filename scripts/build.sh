@@ -60,7 +60,19 @@ log "Updating & installing feeds"
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# 4. user .config ------------------------------------------------------------
+# 4. apply patches from patches/ --------------------------------------------
+if compgen -G "$ROOT_DIR/patches/*.patch" > /dev/null; then
+  log "Applying patches from $ROOT_DIR/patches/"
+  for p in "$ROOT_DIR/patches/"*.patch; do
+    log "  - $(basename "$p")"
+    if ! patch -p1 --dry-run < "$p" >/dev/null 2>&1; then
+      fail "Patch dry-run failed (likely upstream changed context): $p"
+    fi
+    patch -p1 < "$p" || fail "Patch apply failed: $p"
+  done
+fi
+
+# 5. user .config ------------------------------------------------------------
 PICKED=""
 for candidate in "$ROOT_DIR/files/$DEVICE.config" "$ROOT_DIR/files/.config"; do
   if [[ -f "$candidate" ]]; then

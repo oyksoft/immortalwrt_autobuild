@@ -11,13 +11,11 @@ on:
       branch:
         description: 'ImmortalWrt branch to build'
         required: false
-        default: 'master'
+        default: 'openwrt-25.12'
         type: choice
         options:
+          - openwrt-25.12
           - master
-          - openwrt-23.05
-          - openwrt-22.03
-          - openwrt-21.02
 
 concurrency:
   group: build-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}
@@ -25,7 +23,7 @@ concurrency:
 
 env:
   IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt.git
-  IMMORTALWRT_BRANCH: ${{ github.event.inputs.branch || 'master' }}
+  IMMORTALWRT_BRANCH: ${{ github.event.inputs.branch || 'openwrt-25.12' }}
 
 jobs:
   build:

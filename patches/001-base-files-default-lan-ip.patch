@@ -1,0 +1,13 @@
+--- a/package/base-files/files/bin/config_generate
++++ b/package/base-files/files/bin/config_generate
+@@ -164,11 +164,11 @@ generate_network() {
+ 			local ipad netm prefix
+ 			case "$1" in
+-				lan) ipad=${ipaddr:-"192.168.1.1"} ;;
++				lan) ipad=${ipaddr:-"192.168.100.1"} ;;
+ 				*) ipad=${ipaddr:-"192.168.$((addr_offset++)).1"} ;;
+ 			esac
+
+ 			netm=${netmask:-"255.255.255.0"}
+ 			str2ip netm "$netm"
+ 			netmask2prefix prefix "$netm"
