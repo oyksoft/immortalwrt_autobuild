@@ -17,18 +17,22 @@ on:
           - openwrt-25.12
           - master
 
-concurrency:
-  group: build-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}
-  cancel-in-progress: false
-
 env:
   IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt.git
   IMMORTALWRT_BRANCH: ${{ github.event.inputs.branch || 'openwrt-25.12' }}
+  ROOT_DIR: ${{ github.workspace }}
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
+
+    # Per-device concurrency group: prevents two runs for the same device+branch
+    # from racing; different devices/branches can build in parallel.
+    # (Must live at job level to reference matrix.*)
+    concurrency:
+      group: build-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}
+      cancel-in-progress: false
 
     # To add a device:
     #   1. Copy its .config to files/<slug>.config
@@ -64,8 +68,6 @@ jobs:
             cache-${{ runner.os }}-
 
       - name: Show effective config
-        env:
-          ROOT_DIR: ${{ github.workspace }}
         run: |
           echo "Device:   ${{ matrix.device }}"
           echo "Branch:   $IMMORTALWRT_BRANCH"
@@ -76,7 +78,6 @@ jobs:
 
       - name: Build firmware
         env:
-          ROOT_DIR: ${{ github.workspace }}
           DEVICE: ${{ matrix.device }}
         run: bash scripts/build.sh
 
