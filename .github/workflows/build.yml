@@ -29,9 +29,9 @@ jobs:
 
     # Per-device concurrency group: prevents two runs for the same device+branch
     # from racing; different devices/branches can build in parallel.
-    # (Must live at job level to reference matrix.*)
+    # Note: concurrency expressions only allow github/inputs/vars/matrix — not env.
     concurrency:
-      group: build-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}
+      group: build-${{ matrix.device }}-${{ github.event.inputs.branch || 'openwrt-25.12' }}
       cancel-in-progress: false
 
     # To add a device:
