@@ -1,0 +1,24 @@
+# Build outputs
+bin/
+tmp/
+build_dir/
+staging_dir/
+toolchain/
+dl/
+ccache/
+logs/
+
+# ImmortalWrt / OpenWrt source tree
+immortalwrt/
+openwrt/
+feeds/
+
+# Secrets
+secrets/
+*.env
+
+# Local config overrides
+files/.config.local
+
+# User's local backup of the original .config
+R66s/
