@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
-# ImmortalWrt multi-device build script.
-# Invoked from .github/workflows/build.yml on an ubuntu-22.04 runner.
+# ImmortalWrt 多设备编译脚本。
+# 由 .github/workflows/build.yml 在 ubuntu-22.04 runner 上调用。
 #
-# Required env (provided by the workflow matrix):
-#   DEVICE          - device slug, e.g. r66s, redmi-ax6s, x86_64
-#   IMMORTALWRT_BRANCH - upstream branch, e.g. master, openwrt-23.05
+# 必需环境变量（由 workflow matrix 传入）：
+#   DEVICE             - 设备 slug，如 r66s, redmi-ax6s, x86_64
+#   IMMORTALWRT_BRANCH - 上游分支，如 master, openwrt-23.05
 #
-# Resolves the config file with this precedence:
+# 配置文件查找顺序：
 #   files/<DEVICE>.config
-#   files/.config                                  (single-device fallback)
+#   files/.config       （单设备 fallback）
 set -euo pipefail
 
-# ----- knobs (overridable via environment) ----------------------------------
+# ----- 可调参数（可通过环境变量覆盖） --------------------------------------
 IMMORTALWRT_REPO="${IMMORTALWRT_REPO:-https://github.com/immortalwrt/immortalwrt.git}"
 IMMORTALWRT_BRANCH="${IMMORTALWRT_BRANCH:-master}"
 DEVICE="${DEVICE:-r66s}"
 JOBS="${JOBS:-$(nproc)}"
 
-# ROOT_DIR: absolute path to the repo root (so we can find files/$DEVICE.config
-# regardless of where the source tree is checked out).
+# ROOT_DIR：仓库根目录的绝对路径（无论源码树检到哪里都能找到 files/$DEVICE.config）
 ROOT_DIR="${ROOT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || cd "$(dirname "$0")/.." && pwd)}"
 WORKSPACE="${WORKSPACE:-$ROOT_DIR/_work}"
 SRC_DIR="$WORKSPACE/immortalwrt"
@@ -31,10 +30,10 @@ mkdir -p "$WORKSPACE" "$LOG_DIR" "$OUTPUT_DIR"
 log()  { printf '\033[1;34m[build:%s]\033[0m %s\n' "$DEVICE" "$*"; }
 fail() { printf '\033[1;31m[build:%s]\033[0m %s\n' "$DEVICE" "$*" >&2; exit 1; }
 
-log "device=$DEVICE branch=$IMMORTALWRT_BRANCH root=$ROOT_DIR"
+log "设备=$DEVICE 分支=$IMMORTALWRT_BRANCH 工作区=$ROOT_DIR"
 
-# 1. system packages ---------------------------------------------------------
-log "Installing build dependencies"
+# 1. 安装编译依赖 ----------------------------------------------------------
+log "安装编译依赖"
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
   build-essential ccache ecj fastjar file gawk gettext git \
@@ -43,36 +42,36 @@ sudo apt-get install -y --no-install-recommends \
   rsync subversion swig unzip wget xsltproc zlib1g-dev \
   qemu-user-static
 
-# 2. fetch source ------------------------------------------------------------
+# 2. 获取源码 --------------------------------------------------------------
 if [[ -d "$SRC_DIR/.git" ]]; then
-  log "Updating existing source tree"
+  log "更新已有源码树"
   ( cd "$SRC_DIR" && git fetch --prune origin "$IMMORTALWRT_BRANCH" \
       && git reset --hard "origin/$IMMORTALWRT_BRANCH" )
 else
-  log "Cloning $IMMORTALWRT_REPO @ $IMMORTALWRT_BRANCH"
+  log "克隆 $IMMORTALWRT_REPO @ $IMMORTALWRT_BRANCH"
   git clone --depth=1 --branch "$IMMORTALWRT_BRANCH" "$IMMORTALWRT_REPO" "$SRC_DIR"
 fi
 
 cd "$SRC_DIR"
 
-# 3. feeds -------------------------------------------------------------------
-log "Updating & installing feeds"
+# 3. 更新 feeds ------------------------------------------------------------
+log "更新并安装 feeds"
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# 4. apply patches from patches/ --------------------------------------------
+# 4. 应用 patches/ 下的补丁 ------------------------------------------------
 if compgen -G "$ROOT_DIR/patches/*.patch" > /dev/null; then
-  log "Applying patches from $ROOT_DIR/patches/"
+  log "从 $ROOT_DIR/patches/ 应用补丁"
   for p in "$ROOT_DIR/patches/"*.patch; do
     log "  - $(basename "$p")"
     if ! patch -p1 --dry-run < "$p" >/dev/null 2>&1; then
-      fail "Patch dry-run failed (likely upstream changed context): $p"
+      fail "补丁预检失败（上游可能改了上下文）：$p"
     fi
-    patch -p1 < "$p" || fail "Patch apply failed: $p"
+    patch -p1 < "$p" || fail "补丁应用失败：$p"
   done
 fi
 
-# 5. user .config ------------------------------------------------------------
+# 5. 应用用户 .config -------------------------------------------------------
 PICKED=""
 for candidate in "$ROOT_DIR/files/$DEVICE.config" "$ROOT_DIR/files/.config"; do
   if [[ -f "$candidate" ]]; then
@@ -82,30 +81,41 @@ for candidate in "$ROOT_DIR/files/$DEVICE.config" "$ROOT_DIR/files/.config"; do
 done
 
 if [[ -z "$PICKED" ]]; then
-  fail "No config found. Expected one of:
+  fail "未找到配置文件。请提供以下之一：
         - $ROOT_DIR/files/$DEVICE.config
         - $ROOT_DIR/files/.config"
 fi
 
-log "Applying config: $PICKED"
+log "应用配置：$PICKED"
 cp "$PICKED" .config
 
-# 5. sanity ------------------------------------------------------------------
-log "Generating .config sanity"
+# 启用 ccache：让 OpenWrt build system 用 ccache 包裹 gcc/g++
+# CCACHE_DIR 默认就是 ~/.ccache，显式声明以便与 build.yml 缓存路径对齐
+export CCACHE_DIR="$HOME/.ccache"
+mkdir -p "$CCACHE_DIR"
+if ! grep -q '^CONFIG_CCACHE=y' .config; then
+  echo 'CONFIG_CCACHE=y' >> .config
+  log "已在 .config 中启用 CONFIG_CCACHE=y"
+fi
+# 限制 ccache 容量（默认 5GB，对 GitHub cache 配额太大，2GB 足够）
+ccache -M 2G >/dev/null 2>&1 || true
+
+# 6. 校验 .config ----------------------------------------------------------
+log "执行 make defconfig 校验"
 make defconfig 2>&1 | tee -a "$LOG_DIR/${DEVICE}-defconfig.log"
 
-# 6. download sources --------------------------------------------------------
-log "Downloading all sources (cached after first run via actions/cache on dl/)"
+# 7. 下载所有源码 ----------------------------------------------------------
+log "下载所有源码（首次后会由 actions/cache 缓存到 dl/）"
 make -j"$JOBS" download 2>&1 | tee -a "$LOG_DIR/${DEVICE}-download.log"
 find dl -maxdepth 1 -type f -name '*.dl' -print -delete 2>/dev/null || true
 
-# 7. compile -----------------------------------------------------------------
-log "Building firmware (jobs=$JOBS)"
+# 8. 编译 -----------------------------------------------------------------
+log "编译固件（并行任务数=$JOBS）"
 make -j"$JOBS" world 2>&1 | tee -a "$LOG_DIR/${DEVICE}-build.log"
 
-# 8. stage artifacts ---------------------------------------------------------
+# 9. 整理产物 --------------------------------------------------------------
 if [[ ! -d bin/targets ]]; then
-  fail "Build completed but bin/targets/ not found — check $LOG_DIR/${DEVICE}-build.log"
+  fail "编译完成但未找到 bin/targets/，请检查 $LOG_DIR/${DEVICE}-build.log"
 fi
 
 STAGE="$OUTPUT_DIR/$DEVICE"
@@ -123,6 +133,10 @@ cp -a bin/. "$STAGE/"
     | xargs -0 sha256sum > SHA256SUMS
 )
 
-log "Build artifacts ready under $STAGE"
-log "Contents:"
+log "固件产物已就绪：$STAGE"
+log "产物列表："
 find "$STAGE" -maxdepth 4 -type f | sort | sed 's/^/  /'
+
+# 打印 ccache 命中率，方便跨 run 对比
+log "ccache 统计："
+ccache -s 2>&1 | sed 's/^/  /' | tee -a "$LOG_DIR/${DEVICE}-build.log"

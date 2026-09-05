@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# Extract a compact diffconfig from a full .config file.
-# Usage: ./scripts/diffconfig.sh <path-to-.config> [output-file]
+# 从完整 .config 抽取紧凑版 diffconfig（仅保留与默认不同的选项）。
+# 用法：./scripts/diffconfig.sh <.config 路径> [输出文件]
 set -euo pipefail
 
 CONFIG="${1:-files/.config}"
 OUTPUT="${2:-files/diffconfig}"
 
 if [[ ! -f "$CONFIG" ]]; then
-  echo "Error: $CONFIG not found" >&2
+  echo "错误：$CONFIG 不存在" >&2
   exit 1
 fi
 
-# diffconfig keeps lines that differ from the default (i.e. CONFIG_FOO=y / # CONFIG_FOO is not set)
 awk '
   /^CONFIG_/ {
     if ($0 !~ /is not set/) {
@@ -20,4 +19,4 @@ awk '
   }
 ' "$CONFIG" | sort > "$OUTPUT"
 
-echo "Wrote $(wc -l < "$OUTPUT") lines to $OUTPUT"
+echo "已写入 $OUTPUT，共 $(wc -l < "$OUTPUT") 行"
