@@ -43,14 +43,14 @@ sudo apt-get install -y --no-install-recommends \
   qemu-user-static
 
 # 2. 获取源码 --------------------------------------------------------------
-if [[ -d "$SRC_DIR/.git" ]]; then
-  log "更新已有源码树"
-  ( cd "$SRC_DIR" && git fetch --prune origin "$IMMORTALWRT_BRANCH" \
-      && git reset --hard "origin/$IMMORTALWRT_BRANCH" )
-else
-  log "克隆 $IMMORTALWRT_REPO @ $IMMORTALWRT_BRANCH"
-  git clone --depth=1 --branch "$IMMORTALWRT_BRANCH" "$IMMORTALWRT_REPO" "$SRC_DIR"
-fi
+# 无论 .git 是否存在都强制重新克隆。原因：
+# - 每个 Actions run 都是全新 VM，没有跨 run 复用的源码
+# - actions/cache restore 会创建父目录（如 _work/immortalwrt/）但不写入 .git，
+#   这会让 git clone 报 "destination path already exists"
+# - depth=1 浅克隆本身很快（~10s），节省的复杂度比节省的时间更值
+log "克隆 $IMMORTALWRT_REPO @ $IMMORTALWRT_BRANCH"
+rm -rf "$SRC_DIR"
+git clone --depth=1 --branch "$IMMORTALWRT_BRANCH" "$IMMORTALWRT_REPO" "$SRC_DIR"
 
 cd "$SRC_DIR"
 
