@@ -60,6 +60,8 @@ jobs:
         with:
           path: |
             ${{ env.ROOT_DIR }}/_work/immortalwrt/dl
+            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/host
+            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/target-*/
             ~/.ccache
           key: cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-${{ hashFiles(format('files/{0}.config', matrix.device), '.github/workflows/build.yml') }}
           restore-keys: |
