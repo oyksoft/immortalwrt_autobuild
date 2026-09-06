@@ -53,10 +53,10 @@ jobs:
           df -h
 
       - name: 检出仓库代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 缓存源码包与 ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ${{ env.ROOT_DIR }}/_work/immortalwrt/dl
@@ -91,7 +91,7 @@ jobs:
 
       - name: 上传固件到 Artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: immortalwrt-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-${{ github.run_number }}
           path: ${{ github.workspace }}/_work/output/${{ matrix.device }}/**
