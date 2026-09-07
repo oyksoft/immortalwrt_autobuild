@@ -62,7 +62,7 @@ jobs:
             ${{ env.ROOT_DIR }}/_work/immortalwrt/dl
             ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/host
             ~/.ccache
-          key: cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-${{ hashFiles(format('files/{0}.config', matrix.device), '.github/workflows/build.yml') }}
+          key: cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-${{ hashFiles(format('files/{0}.config', matrix.device)) }}
           restore-keys: |
             cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-
             cache-${{ runner.os }}-${{ matrix.device }}-
