@@ -43,14 +43,22 @@ sudo apt-get install -y --no-install-recommends \
   qemu-user-static
 
 # 2. 获取源码 --------------------------------------------------------------
-# 无论 .git 是否存在都强制重新克隆。原因：
-# - 每个 Actions run 都是全新 VM，没有跨 run 复用的源码
-# - actions/cache restore 会创建父目录（如 _work/immortalwrt/）但不写入 .git，
-#   这会让 git clone 报 "destination path already exists"
-# - depth=1 浅克隆本身很快（~10s），节省的复杂度比节省的时间更值
+# HiGarfield/cachewrtbuild 在 step 内部 restore 了 staging_dir/host 和
+# staging_dir/tool-*/，这些是 toolchain 编译产物，必须保留。
+# 但我们也要 fresh clone 源码树，所以流程：
+#   1. 临时把 staging_dir 挪出 SRC_DIR
+#   2. 删 SRC_DIR 整体（避免 git clone 报 "not empty"）
+#   3. git clone fresh
+#   4. 把 staging_dir 挪回 SRC_DIR/staging_dir
 log "克隆 $IMMORTALWRT_REPO @ $IMMORTALWRT_BRANCH"
+if [[ -d "$SRC_DIR/staging_dir" ]]; then
+  mv "$SRC_DIR/staging_dir" "$WORKSPACE/.staging_dir.bak"
+fi
 rm -rf "$SRC_DIR"
 git clone --depth=1 --branch "$IMMORTALWRT_BRANCH" "$IMMORTALWRT_REPO" "$SRC_DIR"
+if [[ -d "$WORKSPACE/.staging_dir.bak" ]]; then
+  mv "$WORKSPACE/.staging_dir.bak" "$SRC_DIR/staging_dir"
+fi
 
 cd "$SRC_DIR"
 

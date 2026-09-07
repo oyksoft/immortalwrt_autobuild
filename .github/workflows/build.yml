@@ -55,18 +55,17 @@ jobs:
       - name: 检出仓库代码
         uses: actions/checkout@v5
 
-      - name: 缓存源码包与 ccache
-        uses: actions/cache@v5
+      - name: Restore OpenWrt cache (dl + toolchain + ccache)
+        uses: actions/cache/restore@v5
         with:
           path: |
             ${{ env.ROOT_DIR }}/_work/immortalwrt/dl
-            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/host
+            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/host*
+            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/tool-*
             ~/.ccache
           key: cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-${{ hashFiles(format('files/{0}.config', matrix.device)) }}
           restore-keys: |
             cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-
-            cache-${{ runner.os }}-${{ matrix.device }}-
-            cache-${{ runner.os }}-
 
       - name: 显示当前生效配置
         run: |
@@ -81,6 +80,17 @@ jobs:
         env:
           DEVICE: ${{ matrix.device }}
         run: bash scripts/build.sh
+
+      - name: Save OpenWrt cache (dl + toolchain + ccache)
+        if: success()
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ${{ env.ROOT_DIR }}/_work/immortalwrt/dl
+            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/host*
+            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/tool-*
+            ~/.ccache
+          key: cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-${{ hashFiles(format('files/{0}.config', matrix.device)) }}
 
       - name: 列出编译产物
         if: always()
