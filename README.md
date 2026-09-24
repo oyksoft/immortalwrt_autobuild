@@ -1,238 +1,181 @@
 # ImmortalWrt Auto-Build
 
-利用 GitHub Actions 自动编译 [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) 固件。
+利用 GitHub Actions + [ImmortalWrt 官方 ImageBuilder](https://downloads.immortalwrt.org/) 拼固件，5-10 分钟出货。
 
 - **当前已配置设备**: NanoPi R66S（Rockchip RK3328，ARMv8）
-- **预留多设备**: matrix 策略，加新设备只需要放 config + 改一行 workflow
+- **架构**: `main` + GitHub Action ImageBuilder workflow
 - **定时构建**: 每周一 02:00 UTC（北京时间 10:00）
-- **手动触发**: Actions 页面 Run workflow，可选 branch
+- **手动触发**: Actions 页面 Run workflow
 - **产物**: GitHub Actions Artifacts（30 天保留，含 sha256）
 
 ---
 
-## 目录结构
+## 架构（v2：ImageBuilder 路线）
 
 ```
-.
-├── .github/workflows/build.yml   # Actions 工作流（matrix: device × branch）
-├── scripts/
-│   ├── build.sh                  # 编译入口脚本（接受 DEVICE + BRANCH 环境变量）
-│   └── diffconfig.sh             # 从 .config 提取 diffconfig
-├── files/
-│   ├── r66s.config               # R66S 的完整编译配置
-│   ├── r66s.diffconfig           # R66S 的精简配置（review 用）
-│   ├── .config                   # 单设备兼容 fallback（可选）
-│   └── <device>.config           # 其他设备的 config 文件
-├── patches/                      # 应用到上游源码的 patch（按文件名升序应用）
-│   └── 001-base-files-default-lan-ip.patch  # 默认 LAN 网关 192.168.1.1 → 192.168.100.1
-├── .gitignore
-└── README.md
+.github/workflows/build.yml      ← GitHub Action workflow
+├── 装 zstd + apk-tools static 3.0.8
+├── 下 ImmortalWrt IB tarball（72 MB）
+├── 解 IB → 改内置 .config（PART SIZE）→ 重打包
+│                                    ① 解压 IB
+│                                    ② sed 改 .config + ptgen -p 参数
+│                                    ③ tar -cI zstd 重新打包
+├── 解压 IB → 跑 make image
+│   ├── feeds.conf 加 passwall feed（IB 不读但留着）
+│   ├── find R66S profile
+│   ├── grep PACKAGES from files/r66s.config
+│   ├── 下载 GitHub 最新 release → luci-app-passwall + i18n apk
+│   ├── make image PROFILE=lunzn_fastrhino_r66s \
+│   │            PACKAGES=$(... ) \
+│   │            KERNELSIZE=64 ROOTFSPARTSIZE=400 PARTSIZE=480
+│   └── 输出 sysupgrade.img.gz + manifest + SHA256SUMS
+└── 上传 artifact（只 sysupgrade.img.gz 一个文件）
 ```
 
-**配置解析优先级**（在 `build.sh` 里）：
-1. `files/$DEVICE.config`（按设备名匹配，首选）
-2. `files/.config`（旧用法 fallback：自动晋升为 `files/$DEVICE.config`，只发生一次）
-3. 报错退出
+**和 v1 的区别**：
+- v1 用 `make world` 从源码编译 → **1.5-2 h** → 已废弃
+- v2 用 IB 拼装预编译包 → **5-10 min** → 当前
+
+**目录**：
+```
+scripts/
+├── build-ib.sh                   # IB 主逻辑（上面流程）
+└── install-passwall-core.sh     # 刷机后手动装 passwall 核心
+files/
+├── r66s.config                   # R66S 完整 PACKAGES（passwall 全套关掉，只留 UI）
+└── r66s.diffconfig               # review 用
+.github/workflows/build.yml      # GitHub Action
+```
+
+---
+
+## 关键决策与原因
+
+### 为什么用 ImageBuilder（而不是源码编译）
+
+源码编译（`make world`）会卡在：
+- Go 1.23 / 1.22 版本要求（xray-core、sing-box 等 Go 包需要）
+- u-boot / trusted-firmware 必须源码 build（5-10 min）
+- 内存/CPU 受 runner 限制（GitHub-hosted runner 是 4 vCPU / 7 GB RAM）
+
+ImageBuilder 路线绕开这些：
+- 所有包预编译（ImmortalWrt 官方 build server）
+- 不需要 Go toolchain
+- 不需要 build u-boot / firmware（profile 自带下载）
+
+### 为什么 passwall 核心包不在 IB 里
+
+IB tarball 里 `luci-app-passwall` 有（ImmortalWrt 仓），但 **`passwall` 核心包**（Lua 脚本集）**没有**——Openwrt-Passwall 仓只 source build，**没 release pre-built apk**。
+
+**解决**：刷机后跑 `install-passwall-core.sh`（在 R66S 上手动从 GitHub 拉源码 cp）。
 
 ---
 
 ## 快速开始
 
-### 1. 准备 `.config`
+### 1. 触发 build
 
-每个设备对应 `files/<slug>.config`（`<slug>` 是你在 workflow matrix 里用的设备名）。
+直接触发 GitHub Actions：
 
-获取 `.config` 的方式：
+1. https://github.com/oyksoft/immortalwrt_autobuild/actions
+2. 左侧选 `Build ImmortalWrt (ImageBuilder)`
+3. `Run workflow`，branch 选 `main`，profile 留空（默认自动查 R66S）
+4. 5-10 分钟出货
 
-| 来源 | 命令 |
-|---|---|
-| 本地已用 `make menuconfig` 生成 | `cp immortalwrt/.config files/<slug>.config` |
-| 从已编译设备反推（不推荐，缺包） | `zcat /proc/config.gz > files/<slug>.config` |
-| 官方 defconfig 起步 | `git clone https://github.com/immortalwrt/immortalwrt && cd immortalwrt && make defconfig`，再把生成的 `.config` 拷过来 |
+### 2. 下载产物
 
-**生成 `diffconfig`（便于 review）：**
+artifact `< 50 MB`，解压得：
+
+```
+out/
+├── immortalwrt-r66s-25.12.2-N-squashfs-sysupgrade.img.gz   ← 完整 SD 卡镜像
+├── immortalwrt-r66s-25.12.2-N-squashfs-sysupgrade.img.gz.sha256sums
+├── manifest.json
+└── profiles.json
+```
+
+只含 sysupgrade 镜像（**不再打包 IB 全产物**——之前 176 MB artifact 已修复）。
+
+### 3. 刷 SD 卡
 
 ```bash
-bash scripts/diffconfig.sh files/<slug>.config files/<slug>.diffconfig
+gunzip -c immortalwrt-r66s-25.12.2-N-squashfs-sysupgrade.img.gz | \
+    sudo dd of=/dev/sdX bs=1M conv=fsync status=progress
+sync
 ```
 
-### 2. 推到 GitHub
+R66S SD 卡槽插入，上电。`192.168.100.1`（默认 LAN 网关已 patch 改了）。
+
+### 4. 刷机后装 passwall 核心
+
+固件已预装：
+- ✅ luci-app-passwall 26.9.16（最新）
+- ✅ luci-i18n-passwall-zh-cn
+- ✅ sing-box、xray-core、hysteria 等引擎
+- ✅ passwall UI 一打开就能看到
+- ❌ passwall 核心（Lua 脚本集）— 需手动装
+
+跑这一条装核心：
 
 ```bash
-git add .gitignore .github README.md files scripts
-git commit -m "Initial ImmortalWrt build pipeline"
-git remote add origin git@github.com:<你的用户名>/<仓库名>.git
-git push -u origin main
+ssh root@192.168.100.1
+curl -fsSL https://raw.githubusercontent.com/oyksoft/immortalwrt_autobuild/main/scripts/install-passwall-core.sh | sh
 ```
 
-### 3. 在 GitHub 上启用 Actions
-
-1. 进入仓库 **Settings → Actions → General**
-2. 勾选 **Allow all actions and reusable workflows**
-3. 进入 **Actions** 页面，等待首次构建
-   - 首次约 **1.5–3 小时**（拉源码 + 首次下载 toolchain + 编译所有设备）
-   - 之后有缓存约 **30–60 分钟/设备**
-
-### 4. 下载固件
-
-每次 run 结束后在 **Artifacts** 区下载：
-
-```
-immortalwrt-r66s-<branch>-<run-number>.zip
-├── nanopi-r66s/
-│   ├── immortalwrt-rockchip-armv8-lunzn_fastrhino-r66s-squashfs-sysupgrade.img.gz
-│   ├── immortalwrt-rockchip-armv8-lunzn_fastrhino-r66s-ext4-sysupgrade.img.gz
-│   └── ...
-├── packages/
-├── manifest.txt
-└── SHA256SUMS
-```
-
-校验：
+或本地拷过去跑：
 
 ```bash
-sha256sum -c SHA256SUMS   # 在解压后的目录里
+scp scripts/install-passwall-core.sh root@192.168.100.1:/tmp/
+ssh root@192.168.100.1
+chmod +x /tmp/install-passwall-core.sh
+/tmp/install-passwall-core.sh
 ```
 
 ---
 
-## 添加新设备
+## 配置
 
-### 步骤
+### files/r66s.config — 唯一真源
 
-1. **放 config**：
-   ```bash
-   cp /path/to/your/new-device.config files/redmi-ax6s.config
-   bash scripts/diffconfig.sh files/redmi-ax6s.config files/redmi-ax6s.diffconfig
-   ```
+PACKAGES 列表（`make image` 时 IB 会装这些）全部从这里提取。
 
-2. **改 workflow**（`.github/workflows/build.yml`）：
-   ```yaml
-   strategy:
-     fail-fast: false
-     matrix:
-       device: [r66s, redmi-ax6s]      # 在这里加 slug
-   ```
+调整 firmware = 改这个文件 → 触发 build → 5-10 min 出货。
 
-3. **（可选）按设备放补丁/自定义文件**：
-   ```
-   files/
-   ├── redmi-ax6s.config
-   ├── redmi-ax6s.diffconfig
-   └── redmi-ax6s/                     # 整个目录会被 rsync 进源树 rootfs
-       ├── etc/
-       │   └── config/
-       │       └── passwall
-       └── usr/
-           └── bin/
-               └── my-helper.sh
-   ```
-   OpenWrt 的 `files/` 机制：源码根目录下的 `files/` 会被拷贝到最终固件里对应位置。
-   如果需要这个特性，可以扩展 `build.sh` 把 `files/$DEVICE/` 拷贝到 `$SRC_DIR/files/`。
+### 不用动的东西
 
-4. **提交并推送**：
-   ```bash
-   git add files/redmi-ax6s.config files/redmi-ax6s.diffconfig .github/workflows/build.yml
-   git commit -m "Add Redmi AX6S build target"
-   git push
-   ```
-
-下次定时/手动触发时会自动加入新设备。
-
-### 设备命名规范
-
-建议用 **短横线连接的 slug**（与下游 OpenWrt 设备树或社区常用名一致）：
-
-| Slug | 对应设备 |
+| 项 | 说明 |
 |---|---|
-| `r66s` | FriendlyElec NanoPi R66S |
-| `redmi-ax6s` | Xiaomi Redmi AX6S / AX3200 |
-| `x86_64` | x86_64 通用（PC/软路由） |
-| `r4s` | FriendlyElec NanoPi R4S |
+| `.github/workflows/build.yml` | 默认就好（除非换设备） |
+| `scripts/build-ib.sh` | 默认就好（除非加特殊 logic） |
 
-slug 名只影响 workflow matrix、cache key、artifact 名——不影响 OpenWrt 内部的 `CONFIG_TARGET_PROFILE`，后者在 `.config` 里指定。
+### 分区大小
+
+```
+kernel:  64 MB    ← r66s.config 里 CONFIG_TARGET_KERNEL_PARTSIZE=64
+rootfs: 400 MB   ← r66s.config 里 CONFIG_TARGET_ROOTFS_PARTSIZE=400
+```
+
+`build-ib.sh` 第 [2.5/8] 步会 sed 改 IB 内置 .config 的 `CONFIG_TARGET_*_PARTSIZE` 和 ptgen 的 `-p 16m -p 300m`（IB 默认值），再重打包 tarball。
 
 ---
 
-## 自定义 feed：passwall（接 Openwrt-Passwall 官方源）
+## 支持多设备吗？
 
-ImmortalWrt 自带 `luci` feed 里的 `passwall`/`luci-app-passwall` 比较旧。仓库里已经默认接入了 [Openwrt-Passwall/openwrt-passwall](https://github.com/Openwrt-Passwall/openwrt-passwall) 的官方 main 分支，会自动覆盖上游旧版。
+**理论上支持，实际上没做适配。**
 
-机制：
+`build-ib.sh` 接受 `USER_PROFILE` env var，理论上能 build 任何 ImmortalWrt IB 出的 profile。
 
-- 项目根目录的 [`feeds.conf`](./feeds.conf) 列出两条自定义 feed（`passwall_packages`、`passwall_luci`）。
-- `build.sh` 在 `feeds update` 前把这两行**插到 `$SRC_DIR/feeds.conf` 顶部**（同时把上游 `feeds.conf.default` 内容追加到后面，避免丢默认 feed）。
-- OpenWrt 的 feed 优先级规则：**列在前面的 feed 优先**。所以顶部这两条会覆盖 ImmortalWrt 默认带的那份。
-- `.github/workflows/build.yml` 的 cache key 已包含 `feeds.conf` 的 hash——改 feed 内容会自动作废旧 cache。
-- CI log 里搜索 `注入自定义 feeds` 可以确认这一步是否执行。
+**没适配的地方**：
+- `IB_URL` 写死了 `rockchip/armv8`——其他 arch 设备改 URL 模板就行
+- ptgen 的 `-p 16m -p 300m` sed 假设 RK3568 默认 partition——其他 SoC 不一定是这个
+- `luci-app-passwall` 下载用 GitHub release 通用 URL——跨设备 OK
 
-切换 passwall 的上游分支：
+**加新设备要做**：
+1. 在 `build-ib.sh` 里加 `BRANCH` 和 `IB_URL` 模板支持参数化
+2. 加 `IB_DIR` / `IB_PROFILE` 检测脚本
+3. 改 `workflow_dispatch` 的 `inputs` 加 `device` 参数
 
-| 操作 | 改哪儿 |
-|---|---|
-| 改默认分支（如 main → openwrt-25.12） | 直接改 `feeds.conf` 里的 `;main` |
-| 跑一次构建即生效 | cache key 变了，第一次会重建 dl/ 缓存 |
-
-**如要回退到 ImmortalWrt 自带的旧版 passwall**：
-
-```
-rm feeds.conf scripts/build.sh  # feeds.conf 的注入段
-```
-
-或者注释掉 `build.sh` 里 3a 这一段。
-
----
-
-## 添加自定义 patch
-
-如果你要改上游 ImmortalWrt 源码（比如默认 LAN IP、默认主机名、特定包的打补丁），把修改做成 patch 文件放到 `patches/`：
-
-```bash
-# 1. 准备 patch（以 base-files/config_generate 为例）
-mkdir -p patches
-cd /path/to/immortalwrt-checkout  # 你本地 clone 的源码
-# 在源码里手动改好后：
-git diff > ../immortalwrt_autobuild/patches/001-base-files-default-lan-ip.patch
-
-# 2. 文件名排序应用，多个 patch 之间建议用数字前缀
-#    001-…, 002-…, 100-… 等
-
-# 3. 测试 patch 是否能干净 apply（在你的源码 checkout 上）
-patch -p1 --dry-run < ../immortalwrt_autobuild/patches/001-base-files-default-lan-ip.patch
-```
-
-`build.sh` 会在 `feeds update` 后、`make defconfig` 前自动按文件名字母序应用 `patches/*.patch`。如果 patch 应用失败（fuzz 超限或上下文被上游改了），CI 会 fail-fast 并打印哪个 patch 失败。
-
-> **fuzz 容忍**：当前 patch 默认 `--fuzz=0`。如果上游在 patch 上下文附近做了少量改动，可在 `build.sh` 里把 `patch -p1` 改成 `patch -p1 --fuzz=3` 允许 ±3 行偏移。
-
----
-
-## 配置选项
-
-### 切换 ImmortalWrt 分支
-
-| 方式 | 操作 |
-|---|---|
-| 手动构建 | Actions 页面 Run workflow 时选择 branch（下拉框） |
-| 定时构建 | 修改 `.github/workflows/build.yml` 里 `env.IMMORTALWRT_BRANCH` 默认值（当前默认 `openwrt-25.12`） |
-
-常用分支：
-- `openwrt-25.12`：基于 OpenWrt 25.12（2026-09 更新）
-- `master`：ImmortalWrt 滚动分支（对应未来 OpenWrt 主线）
-
-只暴露这两个，其他分支（24.10 / 23.05 / 21.02）需要时直接改 `env.IMMORTALWRT_BRANCH` 即可。
-
-### 修改构建参数
-
-环境变量（在 workflow 或 build.sh 里调整）：
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `DEVICE` | `r66s` | 设备 slug（由 matrix 注入） |
-| `IMMORTALWRT_REPO` | `https://github.com/immortalwrt/immortalwrt.git` | 源码仓库 |
-| `IMMORTALWRT_BRANCH` | `openwrt-25.12` | 分支（当前默认；workflow 可手动覆盖） |
-| `JOBS` | `nproc`（runner 上 = 4） | 并行编译任务数 |
-| `ROOT_DIR` | `${{ github.workspace }}` | 仓库根路径 |
+**最简单**：复制 `r66s.config` 到新设备名（`x86_64.config` 等），然后 build-ib.sh 改 URL 生成。
 
 ---
 
@@ -240,19 +183,18 @@ patch -p1 --dry-run < ../immortalwrt_autobuild/patches/001-base-files-default-la
 
 | 现象 | 可能原因 | 处理 |
 |---|---|---|
-| 磁盘满 / `No space left on device` | dl + build_dir + staging_dir 总占用 25–35GB，runner 默认 ~14GB 不够 | 已加 `Free up disk space` 步骤删 dotnet/ghc；若仍 OOM 改用 self-hosted runner |
-| `feeds update` 卡死 | 网络抽风 | 重跑 workflow（cache 已保留） |
-| `make download` 报 hash mismatch | 上游 dl URL 变了 / cache 损坏 | 删对应 cache 重跑 |
-| 6 小时超时 | 单设备包过多 | 砍包，或拆多次构建；多设备 matrix 也会让总时间叠加 |
-| ccache 没生效 | 缓存 key 变了（device/branch/.config 任一改动） | 正常现象，下次构建会重建 |
-| matrix 中某个设备报错 | 该 `.config` 不适合当前 branch | 检查 `make defconfig` 输出；或单独跑那个 device |
+| 磁盘满 | runner 默认 ~14 GB | 已加 `Free up disk space` 步骤删 dotnet/ghc |
+| 6 小时超时 | 包过多 | 砍包或用 self-hosted runner |
+| `make download` 报 hash mismatch | 上游 URL 变了 | 清 cache 重跑 |
+| passwall apk 装不上 | 文件名 "25.12+_ 前缀" 不匹配 | `install-passwall-core.sh` 里有这逻辑 |
+| `find <profile>` 空 | profile 名错 | 查 IB 里 `.profiles/` 内容 |
 
 ---
 
-## 安全提醒
+## 安全
 
 - **私有仓库** 每月 2000 分钟免费（公开无限）。
-- `.config` 会暴露你启用的所有包和任何自定义 feed URL。
+- `files/r66s.config` 暴露你启用的所有包。
 - 避免把密钥、API token 写进配置。
 
 ---
