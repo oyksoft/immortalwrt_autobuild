@@ -68,3 +68,18 @@ jobs:
           path: artifact/**
           if-no-files-found: error
           retention-days: 30
+
+      - name: 创建草稿 release（人工手动 publish）
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: r66s-${{ inputs.branch || '25.12.2' }}-run${{ github.run_number }}
+          name: 'R66S build #${{ github.run_number }}'
+          body: |
+            Build #${{ github.run_number }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ inputs.branch || '25.12.2' }}
+            Date: ${{ github.event.head_commit.timestamp }}
+            *草稿——人工点 Publish release 后才永久保留*
+          draft: true
+          files: artifact/**
