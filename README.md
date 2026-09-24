@@ -30,8 +30,8 @@
 ```
 
 **配置解析优先级**（在 `build.sh` 里）：
-1. `files/$DEVICE.config`（按设备名匹配）
-2. `files/.config`（单设备 fallback）
+1. `files/$DEVICE.config`（按设备名匹配，首选）
+2. `files/.config`（旧用法 fallback：自动晋升为 `files/$DEVICE.config`，只发生一次）
 3. 报错退出
 
 ---
@@ -78,7 +78,7 @@ git push -u origin main
 每次 run 结束后在 **Artifacts** 区下载：
 
 ```
-immortalwrt-r66s-master-<run-number>.zip
+immortalwrt-r66s-<branch>-<run-number>.zip
 ├── nanopi-r66s/
 │   ├── immortalwrt-rockchip-armv8-lunzn_fastrhino-r66s-squashfs-sysupgrade.img.gz
 │   ├── immortalwrt-rockchip-armv8-lunzn_fastrhino-r66s-ext4-sysupgrade.img.gz
@@ -154,6 +154,35 @@ slug 名只影响 workflow matrix、cache key、artifact 名——不影响 Open
 
 ---
 
+## 自定义 feed：passwall（接 Openwrt-Passwall 官方源）
+
+ImmortalWrt 自带 `luci` feed 里的 `passwall`/`luci-app-passwall` 比较旧。仓库里已经默认接入了 [Openwrt-Passwall/openwrt-passwall](https://github.com/Openwrt-Passwall/openwrt-passwall) 的官方 main 分支，会自动覆盖上游旧版。
+
+机制：
+
+- 项目根目录的 [`feeds.conf`](./feeds.conf) 列出两条自定义 feed（`passwall_packages`、`passwall_luci`）。
+- `build.sh` 在 `feeds update` 前把这两行**插到 `$SRC_DIR/feeds.conf` 顶部**（同时把上游 `feeds.conf.default` 内容追加到后面，避免丢默认 feed）。
+- OpenWrt 的 feed 优先级规则：**列在前面的 feed 优先**。所以顶部这两条会覆盖 ImmortalWrt 默认带的那份。
+- `.github/workflows/build.yml` 的 cache key 已包含 `feeds.conf` 的 hash——改 feed 内容会自动作废旧 cache。
+- CI log 里搜索 `注入自定义 feeds` 可以确认这一步是否执行。
+
+切换 passwall 的上游分支：
+
+| 操作 | 改哪儿 |
+|---|---|
+| 改默认分支（如 main → openwrt-25.12） | 直接改 `feeds.conf` 里的 `;main` |
+| 跑一次构建即生效 | cache key 变了，第一次会重建 dl/ 缓存 |
+
+**如要回退到 ImmortalWrt 自带的旧版 passwall**：
+
+```
+rm feeds.conf scripts/build.sh  # feeds.conf 的注入段
+```
+
+或者注释掉 `build.sh` 里 3a 这一段。
+
+---
+
 ## 添加自定义 patch
 
 如果你要改上游 ImmortalWrt 源码（比如默认 LAN IP、默认主机名、特定包的打补丁），把修改做成 patch 文件放到 `patches/`：
@@ -185,7 +214,7 @@ patch -p1 --dry-run < ../immortalwrt_autobuild/patches/001-base-files-default-la
 | 方式 | 操作 |
 |---|---|
 | 手动构建 | Actions 页面 Run workflow 时选择 branch（下拉框） |
-| 定时构建 | 修改 `.github/workflows/build.yml` 里 `env.IMMORTALWRT_BRANCH` 默认值 |
+| 定时构建 | 修改 `.github/workflows/build.yml` 里 `env.IMMORTALWRT_BRANCH` 默认值（当前默认 `openwrt-25.12`） |
 
 常用分支：
 - `openwrt-25.12`：基于 OpenWrt 25.12（2026-09 更新）
@@ -201,7 +230,7 @@ patch -p1 --dry-run < ../immortalwrt_autobuild/patches/001-base-files-default-la
 |---|---|---|
 | `DEVICE` | `r66s` | 设备 slug（由 matrix 注入） |
 | `IMMORTALWRT_REPO` | `https://github.com/immortalwrt/immortalwrt.git` | 源码仓库 |
-| `IMMORTALWRT_BRANCH` | `master` | 分支 |
+| `IMMORTALWRT_BRANCH` | `openwrt-25.12` | 分支（当前默认；workflow 可手动覆盖） |
 | `JOBS` | `nproc`（runner 上 = 4） | 并行编译任务数 |
 | `ROOT_DIR` | `${{ github.workspace }}` | 仓库根路径 |
 

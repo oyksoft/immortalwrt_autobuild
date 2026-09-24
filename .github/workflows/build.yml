@@ -1,7 +1,4 @@
-name: Build ImmortalWrt
-
-# Schedule: every Monday 02:00 UTC (10:00 Asia/Shanghai).
-# Manual: Run workflow with a branch choice; builds every device listed in the matrix.
+name: Build ImmortalWrt (ImageBuilder)
 
 on:
   schedule:
@@ -9,102 +6,65 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'ImmortalWrt branch to build'
+        description: 'ImmortalWrt release tag'
         required: false
-        default: 'openwrt-25.12'
-        type: choice
-        options:
-          - openwrt-25.12
-          - master
-
-env:
-  IMMORTALWRT_REPO: https://github.com/immortalwrt/immortalwrt.git
-  IMMORTALWRT_BRANCH: ${{ github.event.inputs.branch || 'openwrt-25.12' }}
-  ROOT_DIR: ${{ github.workspace }}
+        default: '25.12.2'
+        type: string
+      profile:
+        description: 'R66S profile（自动查，留空）'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 360
-
-    # Per-device concurrency group: prevents two runs for the same device+branch
-    # from racing; different devices/branches can build in parallel.
-    # Note: concurrency expressions only allow github/inputs/vars/matrix — not env.
-    concurrency:
-      group: build-${{ matrix.device }}-${{ github.event.inputs.branch || 'openwrt-25.12' }}
-      cancel-in-progress: false
-
-    # To add a device:
-    #   1. Copy its .config to files/<slug>.config
-    #   2. Add the slug below
-    #   3. (Optional) Add per-device files/patches under files/<slug>/
-    strategy:
-      fail-fast: false
-      matrix:
-        device: [r66s]
-        # Examples for future expansion:
-        # device: [r66s, redmi-ax6s, nanopi-r4s, x86_64]
-
+    timeout-minutes: 30
     steps:
-      - name: 清理 runner 磁盘空间
+      - uses: actions/checkout@v5
+
+      - name: 装 zstd（IB 是 .tar.zst）
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
-          sudo apt-get clean
-          df -h
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd
 
-      - name: 检出仓库代码
-        uses: actions/checkout@v5
-
-      - name: Restore OpenWrt cache (dl + toolchain + ccache)
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            ${{ env.ROOT_DIR }}/_work/immortalwrt/dl
-            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/host*
-            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/tool-*
-            ~/.ccache
-          key: cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-${{ hashFiles(format('files/{0}.config', matrix.device)) }}
-          restore-keys: |
-            cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-
-
-      - name: 显示当前生效配置
-        run: |
-          echo "设备:    ${{ matrix.device }}"
-          echo "分支:    $IMMORTALWRT_BRANCH"
-          echo "配置:    $ROOT_DIR/files/${{ matrix.device }}.config"
-          test -f "$ROOT_DIR/files/${{ matrix.device }}.config" \
-            && echo "配置存在: 是" \
-            || { echo "配置存在: 否 — 终止"; exit 1; }
-
-      - name: 编译固件
+      - name: 跑 IB build 脚本
         env:
-          DEVICE: ${{ matrix.device }}
-        run: bash scripts/build.sh
+          BRANCH: ${{ inputs.branch || '25.12.2' }}
+          USER_PROFILE: ${{ inputs.profile }}
+        run: bash scripts/build-ib.sh
 
-      - name: Save OpenWrt cache (dl + toolchain + ccache)
+      - name: 只挑 sysupgrade 镜像上传（不打包 packages/ 等中间产物）
         if: success()
-        uses: actions/cache/save@v5
-        with:
-          path: |
-            ${{ env.ROOT_DIR }}/_work/immortalwrt/dl
-            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/host*
-            ${{ env.ROOT_DIR }}/_work/immortalwrt/staging_dir/tool-*
-            ~/.ccache
-          key: cache-${{ runner.os }}-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-${{ hashFiles(format('files/{0}.config', matrix.device)) }}
-
-      - name: 列出编译产物
-        if: always()
         run: |
-          echo "=== bin 目录树 ==="
-          find ${{ github.workspace }}/_work/output/${{ matrix.device }} -maxdepth 4 -type f 2>/dev/null | head -100 || true
-          echo "=== SHA256SUMS ==="
-          cat ${{ github.workspace }}/_work/output/${{ matrix.device }}/SHA256SUMS 2>/dev/null || true
+          echo '=== debug：当前目录 ==='
+          pwd
+          echo '=== debug：out/ 内容（IB 输出在这里）==='
+          ls -lh out/ 2>&1 | head -20
+          echo '=== debug：找 *-sysupgrade.img.gz ==='
+          find out -name '*-sysupgrade.img.gz' 2>/dev/null | head -5
+          echo '=== copy ==='
+          mkdir -p artifact
+          IMG=$(find out -name '*-squashfs-sysupgrade.img.gz' 2>/dev/null | head -1)
+          if [ -z "$IMG" ]; then
+            IMG=$(find out -name '*-ext4-sysupgrade.img.gz' 2>/dev/null | head -1)
+          fi
+          if [ -n "$IMG" ]; then
+            echo "  找到：$IMG"
+            cp "$IMG" artifact/
+          else
+            echo "  ⚠️  没找到 sysupgrade 镜像——build 可能失败"
+          fi
+          echo '=== 上传 ==='
+          ls -lh artifact/
+          echo '=== sha256 ==='
+          sha256sum artifact/*
 
-      - name: 上传固件到 Artifacts
+      - name: 上传固件
         if: success()
         uses: actions/upload-artifact@v6
         with:
-          name: immortalwrt-${{ matrix.device }}-${{ env.IMMORTALWRT_BRANCH }}-${{ github.run_number }}
-          path: ${{ github.workspace }}/_work/output/${{ matrix.device }}/**
+          name: immortalwrt-r66s-${{ inputs.branch || '25.12.2' }}-${{ github.run_number }}
+          path: artifact/**
           if-no-files-found: error
           retention-days: 30
