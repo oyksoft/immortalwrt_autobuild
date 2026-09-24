@@ -30,6 +30,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends zstd
 
+      - name: sanitize inputs
+        id: sanitize
+        env:
+          BRANCH_RAW: ${{ inputs.branch || '25.12.2' }}
+        run: |
+          # bash 里 sed 跑，去掉 / 和其他特殊字符
+          BRANCH_SAFE=$(echo "$BRANCH_RAW" | sed 's:/:_:g; s:[^a-zA-Z0-9._-]:_:g')
+          echo "branch_safe=$BRANCH_SAFE" >> "$GITHUB_OUTPUT"
+
       - name: 跑 IB build 脚本
         env:
           BRANCH: ${{ inputs.branch || '25.12.2' }}
@@ -75,8 +84,7 @@ jobs:
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          # sanitize branch 名：去掉 / 和其他会让 git tag 失效的字符
-          tag_name: r66s-${{ inputs.branch || '25.12.2' | sed 's:/:_:g; s:[^a-zA-Z0-9._-]:_:g' }}-run${{ github.run_number }}-attempt${{ github.run_attempt }}
+          tag_name: r66s-${{ steps.sanitize.outputs.branch_safe }}-run${{ github.run_number }}-attempt${{ github.run_attempt }}
           name: 'R66S build #${{ github.run_number }} (attempt ${{ github.run_attempt }})'
           body: |
             Build #${{ github.run_number }}
