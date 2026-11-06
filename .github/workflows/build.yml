@@ -1,4 +1,4 @@
-name: Build ImmortalWrt (ImageBuilder)
+name: 构建 ImmortalWrt 固件（ImageBuilder）
 
 on:
   schedule:
@@ -6,55 +6,50 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'ImmortalWrt release tag'
+        description: 'ImmortalWrt 版本号（如 25.12.2）'
         required: false
         default: '25.12.2'
         type: string
       profile:
-        description: 'R66S profile（自动查，留空）'
+        description: 'R66S profile（留空自动检测）'
         required: false
         default: ''
         type: string
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - name: 拉取代码
+        uses: actions/checkout@v5
 
-      - name: 装 zstd（IB 是 .tar.zst）
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zstd
-
-      - name: sanitize inputs
+      - name: 清洗版本号（去掉特殊字符，用作 release tag）
         id: sanitize
         env:
           BRANCH_RAW: ${{ inputs.branch || '25.12.2' }}
         run: |
-          # bash 里 sed 跑，去掉 / 和其他特殊字符
           BRANCH_SAFE=$(echo "$BRANCH_RAW" | sed 's:/:_:g; s:[^a-zA-Z0-9._-]:_:g')
           echo "branch_safe=$BRANCH_SAFE" >> "$GITHUB_OUTPUT"
 
-      - name: 跑 IB build 脚本
+      - name: 跑 ImageBuilder 构建脚本
         env:
           BRANCH: ${{ inputs.branch || '25.12.2' }}
           USER_PROFILE: ${{ inputs.profile }}
         run: bash scripts/build-ib.sh
 
-      - name: 只挑 sysupgrade 镜像上传（不打包 packages/ 等中间产物）
+      - name: 挑出 sysupgrade 镜像并准备上传
         if: success()
         run: |
-          echo '=== debug：当前目录 ==='
+          echo '=== 当前目录 ==='
           pwd
-          echo '=== debug：out/ 内容（IB 输出在这里）==='
+          echo '=== out/ 内容（IB 输出在这里）==='
           ls -lh out/ 2>&1 | head -20
-          echo '=== debug：找 *-sysupgrade.img.gz ==='
+          echo '=== 找 sysupgrade 镜像 ==='
           find out -name '*-sysupgrade.img.gz' 2>/dev/null | head -5
-          echo '=== copy ==='
+          echo '=== 拷贝到 artifact/ ==='
           mkdir -p artifact
           IMG=$(find out -name '*-squashfs-sysupgrade.img.gz' 2>/dev/null | head -1)
           if [ -z "$IMG" ]; then
@@ -66,31 +61,44 @@ jobs:
           else
             echo "  ⚠️  没找到 sysupgrade 镜像——build 可能失败"
           fi
-          echo '=== 上传 ==='
+          echo '=== artifact/ 内容 ==='
           ls -lh artifact/
           echo '=== sha256 ==='
           sha256sum artifact/*
 
-      - name: 上传固件
+      - name: 上传固件到 Actions Artifacts（7 天后过期）
         if: success()
         uses: actions/upload-artifact@v6
         with:
           name: immortalwrt-r66s-${{ inputs.branch || '25.12.2' }}-${{ github.run_number }}
           path: artifact/**
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
-      - name: 创建草稿 release（人工手动 publish）
+      - name: 创建草稿 Release（人工手动 publish 后永久保留）
         if: success()
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: r66s-${{ steps.sanitize.outputs.branch_safe }}-run${{ github.run_number }}-attempt${{ github.run_attempt }}
-          name: 'R66S build #${{ github.run_number }} (attempt ${{ github.run_attempt }})'
+          name: 'R66S 构建 #${{ github.run_number }}（第 ${{ github.run_attempt }} 次）'
           body: |
-            Build #${{ github.run_number }}
-            Commit: ${{ github.sha }}
-            Branch: ${{ inputs.branch || '25.12.2' }}
-            Date: ${{ github.event.head_commit.timestamp }}
+            **构建信息**
+            - Run: #${{ github.run_number }}（第 ${{ github.run_attempt }} 次）
+            - Commit: ${{ github.sha }}
+            - 版本: ${{ inputs.branch || '25.12.2' }}
+            - 时间: ${{ github.event.head_commit.timestamp }}
+
             *草稿——人工点 Publish release 后才永久保留*
           draft: true
           files: artifact/**
+
+      - name: 构建失败时上传日志
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-log-${{ github.run_number }}
+          path: |
+            output.log
+            out/manifest.json
+          if-no-files-found: warn
+          retention-days: 7
