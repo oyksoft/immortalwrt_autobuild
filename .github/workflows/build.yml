@@ -43,12 +43,14 @@ jobs:
       - name: 读 Passwall 版本（供 release 用）
         id: pw
         run: |
-          if [ -f passwall_version.txt ]; then
+          if [ -f passwall_version.txt ] && [ -s passwall_version.txt ]; then
             PW_VER=$(cat passwall_version.txt)
+            # 生成 markdown 链接
+            PW_LINE="- Passwall: [${PW_VER}](https://github.com/Openwrt-Passwall/openwrt-passwall/releases/tag/${PW_VER})"
           else
-            PW_VER="未获取"
+            PW_LINE="- Passwall: 未获取"
           fi
-          echo "passwall_version=$PW_VER" >> "$GITHUB_OUTPUT"
+          echo "passwall_line=${PW_LINE}" >> "$GITHUB_OUTPUT"
 
       - name: 挑出 sysupgrade 镜像并准备上传
         if: success()
@@ -96,7 +98,7 @@ jobs:
             - Run: #${{ github.run_number }}（第 ${{ github.run_attempt }} 次）
             - Commit: ${{ github.sha }}
             - 版本: ${{ inputs.branch || '25.12.2' }}
-            - Passwall: ${{ steps.pw.outputs.passwall_version }}
+            ${{ steps.pw.outputs.passwall_line }}
 
             *草稿——人工点 Publish release 后才永久保留*
           draft: true
