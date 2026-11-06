@@ -112,6 +112,8 @@ for a in r.get('assets', []):
 
   echo "  最新 release：$TAG_NAME"
   echo "  版本前缀：$VER_PREFIX"
+  # 写到文件供 release step 用
+  echo "$TAG_NAME" > "$WORKSPACE/passwall_version.txt"
 
   if [ -n "$TAG_NAME" ] && [ -n "$LUCI_ASSET" ]; then
     LUCI_URL="https://github.com/Openwrt-Passwall/openwrt-passwall/releases/download/${TAG_NAME}/${LUCI_ASSET}"

@@ -40,6 +40,16 @@ jobs:
           USER_PROFILE: ${{ inputs.profile }}
         run: bash scripts/build-ib.sh
 
+      - name: 读 Passwall 版本（供 release 用）
+        id: pw
+        run: |
+          if [ -f passwall_version.txt ]; then
+            PW_VER=$(cat passwall_version.txt)
+          else
+            PW_VER="未获取"
+          fi
+          echo "passwall_version=$PW_VER" >> "$GITHUB_OUTPUT"
+
       - name: 挑出 sysupgrade 镜像并准备上传
         if: success()
         run: |
@@ -86,7 +96,7 @@ jobs:
             - Run: #${{ github.run_number }}（第 ${{ github.run_attempt }} 次）
             - Commit: ${{ github.sha }}
             - 版本: ${{ inputs.branch || '25.12.2' }}
-            - 时间: ${{ github.event.head_commit.timestamp }}
+            - Passwall: ${{ steps.pw.outputs.passwall_version }}
 
             *草稿——人工点 Publish release 后才永久保留*
           draft: true
