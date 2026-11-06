@@ -89,8 +89,8 @@ if [ -z "$RELEASE_JSON" ]; then
   echo "  ⚠️  查最新 release 失败，luci-app-passwall apk 不会下到 IB"
 else
   TAG_NAME=$(echo "$RELEASE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
-  # 版本前缀用 $BRANCH（如 25.12+_、26.x+_），不再硬编码
-  VER_PREFIX="${BRANCH}+_"
+  # asset 名前缀用 minor 版本（25.12.2 → 25.12+_），upstream 不带 patch 号
+  VER_PREFIX="${BRANCH%.*}+_"
   LUCI_ASSET=$(echo "$RELEASE_JSON" | python3 -c "
 import sys,json
 r = json.load(sys.stdin)
