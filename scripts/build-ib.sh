@@ -246,10 +246,33 @@ ls -la "$OUTPUT_DIR/" 2>&1 | head -20
 # 自检：确认自定义文件真的进了固件（注入失败时能第一时间发现）
 echo "=== 自检：自定义文件是否进固件 ==="
 IMG_CHECK=$(ls "$OUTPUT_DIR"/*squashfs-sysupgrade.img.gz 2>/dev/null | head -1)
+UNSQUASH="$IB_DIR/staging_dir/host/bin/unsquashfs"
 if [ -z "$IMG_CHECK" ]; then
   echo "  ⚠️  找不到 sysupgrade 镜像，跳过自检"
-elif zcat "$IMG_CHECK" 2>/dev/null | strings 2>/dev/null | grep -q "BBR 加速"; then
-  echo "  ✓ 自检通过：BBR 页面已包含在固件中"
 else
-  echo "  ❌ 自检失败：自定义文件没进固件（注入机制需重新排查）"
+  # 第二遍 make image 后，rootfs 目录里的文件是否还在
+  if [ -f "$IB_TARGET_DIR/etc/config/bbr" ]; then
+    echo "  · rootfs 目录里文件仍在：$IB_TARGET_DIR/etc/config/bbr"
+  else
+    echo "  ⚠️  rootfs 目录里文件已消失（make image 重建了目录）"
+  fi
+
+  # squashfs 是压缩的，strings 搜不到——必须用 unsquashfs 列目录
+  FOUND=0
+  if [ -x "$UNSQUASH" ]; then
+    zcat "$IMG_CHECK" > /tmp/bbr-check.squashfs 2>/dev/null || true
+    if "$UNSQUASH" -l /tmp/bbr-check.squashfs 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua"; then
+      FOUND=1
+      echo "  ✓ 镜像内含："
+      "$UNSQUASH" -l /tmp/bbr-check.squashfs 2>/dev/null | grep -E "bbr" | sed 's/^/      /'
+    fi
+  else
+    echo "  ⚠️  没有 unsquashfs（$UNSQUASH）"
+  fi
+
+  if [ "$FOUND" = "1" ]; then
+    echo "  ✓ 自检通过：BBR 页面已包含在固件中"
+  else
+    echo "  ❌ 自检失败：自定义文件没进固件（注入机制需重新排查）"
+  fi
 fi
