@@ -77,16 +77,13 @@ echo "  IB_TARGET_DIR=$IB_TARGET_DIR"
 echo "  TARGET_DIR_ORIG=$TARGET_DIR_ORIG"
 
 # 顺手把 IB 的相关 Makefile 片段打出来，方便排查
-echo "  --- IB 根目录 ---"
-ls "$IB_DIR" 2>/dev/null | head -25 | sed 's/^/    /' || true
-echo "  --- IB Makefile ---"
-grep -vE "^\s*$" "$IB_DIR/Makefile" 2>/dev/null | head -30 | sed 's/^/    /' || true
-echo "  --- include 里的顶层 target ---"
-grep -rnE "^[a-zA-Z_.-]+:" "$IB_DIR/include/"*.mk 2>/dev/null | head -15 | sed 's/^/    /' || true
-echo "  --- image.mk 里的 rootfs 相关 ---"
-grep -nE "prepare_rootfs|TARGET_DIR_ORIG|root.orig" "$IB_DIR/include/image.mk" 2>/dev/null | head -8 | sed 's/^/    /' || true
-echo "  --- rootfs.mk 里的 root.orig 定义 ---"
-grep -n "root.orig" "$IB_DIR/include/rootfs.mk" 2>/dev/null | head -5 | sed 's/^/    /' || true
+echo "  --- include/image.mk 里 prepare_rootfs / BuildImage ---"
+grep -n -B3 -A6 "prepare_rootfs" "$IB_DIR/include/image.mk" 2>/dev/null | head -30 | sed 's/^/    /' || true
+grep -n -B2 -A6 "BuildImage" "$IB_DIR/include/image.mk" 2>/dev/null | head -25 | sed 's/^/    /' || true
+echo "  --- include/rootfs.mk 里的 prepare_rootfs ---"
+grep -n -B2 -A10 "define prepare_rootfs" "$IB_DIR/include/rootfs.mk" 2>/dev/null | head -20 | sed 's/^/    /' || true
+echo "  --- rules.mk 里的 target ---"
+grep -nE "^[a-zA-Z_.-]+:" "$IB_DIR/rules.mk" 2>/dev/null | head -20 | sed 's/^/    /' || true
 
 # 方案 A：IB 根目录 files/（万一某些版本会用到，先放上）
 mkdir -p "$IB_TOPDIR/files"
@@ -126,6 +123,33 @@ echo "包数量：$(wc -l < packagelist.txt)"
 echo "=== [7/9] 下 luci-app-passwall apk 进 IB packages（UI 用）==="
 mkdir -p "$IB_DIR/packages"
 cd "$WORKSPACE"
+
+# === 把自定义文件做成 apk 包，放进 IB 的 packages/ 目录 ===
+# IB 会把 packages/ 里的本地包跟官方包一起 apk install 进 rootfs，
+# 这是 OpenWrt ImageBuilder 官方支持的“注入自定义文件”方式。
+echo "=== [7.5/9] 打包自定义文件为本地 apk（BBR 加速 UI 等）==="
+PKG_NAME="luci-app-bbr"
+PKG_VER="1.0.0"
+PKG_STAGE="$WORKSPACE/.pkgstage/$PKG_NAME"
+rm -rf "$PKG_STAGE"
+mkdir -p "$PKG_STAGE"
+cp -a "$WORKSPACE/files/rootfs/." "$PKG_STAGE/"
+chmod +x "$PKG_STAGE/etc/init.d/bbr" 2>/dev/null || true
+cat > "$PKG_STAGE/.PKGINFO" <<EOF
+pkgname = $PKG_NAME
+pkgver = $PKG_VER
+pkgdesc = BBR 加速 LuCI 页面（自定义）
+arch = all
+size = $(du -sk "$PKG_STAGE" | cut -f1)
+EOF
+mkdir -p "$IB_DIR/packages"
+tar -czf "$IB_DIR/packages/${PKG_NAME}-${PKG_VER}.apk" -C "$PKG_STAGE" .
+echo "  ✓ 已生成 ${PKG_NAME}-${PKG_VER}.apk"
+tar -tzf "$IB_DIR/packages/${PKG_NAME}-${PKG_VER}.apk" | sed 's/^/    /'
+
+# 加进安装列表（apk add 才会装它）
+echo "$PKG_NAME" >> packagelist.txt
+echo "  ✓ 已加入安装列表（包总数：$(wc -l < packagelist.txt)）"
 
 # 自动查 GitHub API 最新 release，取 tag_name 和对应 apk
 # asset 文件名带 "<BRANCH>_" 前缀（如 25.12+_luci-app-passwall-xxx.apk）
@@ -246,7 +270,10 @@ ls -la "$OUTPUT_DIR/" 2>&1 | head -20
 # 自检：确认自定义文件真的进了固件（注入失败时能第一时间发现）
 echo "=== 自检：自定义文件是否进固件 ==="
 IMG_CHECK=$(ls "$OUTPUT_DIR"/*squashfs-sysupgrade.img.gz 2>/dev/null | head -1)
-UNSQUASH="$IB_DIR/staging_dir/host/bin/unsquashfs"
+UNSQUASH=""
+for u in "$IB_DIR/staging_dir/host/bin/unsquashfs" "$(command -v unsquashfs 2>/dev/null)"; do
+  if [ -n "$u" ] && [ -x "$u" ]; then UNSQUASH="$u"; break; fi
+done
 if [ -z "$IMG_CHECK" ]; then
   echo "  ⚠️  找不到 sysupgrade 镜像，跳过自检"
 else
