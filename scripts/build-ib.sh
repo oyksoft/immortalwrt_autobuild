@@ -29,6 +29,8 @@ mkdir -p ib-extracted
 tar --use-compress-program=zstd -xf ib.tar.zst -C ib-extracted
 IB_DIR=$(find ib-extracted -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*' | head -1)
 [ -z "$IB_DIR" ] && { echo "❌ 找不到 IB 目录"; ls ib-extracted/; exit 1; }
+# 转成绝对路径——后面要 cd 进去再引用
+IB_DIR="$WORKSPACE/$IB_DIR"
 echo "IB_DIR=$IB_DIR"
 
 echo "=== [3/9] 改 IB 内置分区大小（kernel 64MB + rootfs 400MB）==="
@@ -58,19 +60,21 @@ echo "=== [4/9] 注入自定义文件（BBR 加速 UI 等）==="
 cd "$IB_DIR"
 
 # 探测 IB 的 make 变量（make -pn 给的是未展开的定义，用 --eval 拿展开后的值）
-VARS=$(make --eval='print-vars: ; @echo "V_BOARD=$(BOARD)"; echo "V_BUILD_DIR=$(BUILD_DIR)"; echo "V_TARGET_ROOTFS_DIR=$(TARGET_ROOTFS_DIR)"; echo "V_TARGET_DIR_ORIG=$(TARGET_DIR_ORIG)"; echo "V_TOPDIR=$(TOPDIR)"' print-vars 2>/dev/null || true)
+VARS=$(make --eval='print-vars: ; @echo "V_BOARD=$(BOARD)"; echo "V_BUILD_DIR=$(BUILD_DIR)"; echo "V_TARGET_ROOTFS_DIR=$(TARGET_ROOTFS_DIR)"; echo "V_TARGET_DIR_ORIG=$(TARGET_DIR_ORIG)"; echo "V_TARGET_DIR=$(TARGET_DIR)"; echo "V_TOPDIR=$(TOPDIR)"' print-vars 2>/dev/null || true)
 getvar() { echo "$VARS" | grep "^V_$1=" | head -1 | cut -d= -f2- || true; }
 IB_TOPDIR=$(getvar TOPDIR)
 BOARD=$(getvar BOARD)
 TARGET_ROOTFS_DIR=$(getvar TARGET_ROOTFS_DIR)
 TARGET_DIR_ORIG=$(getvar TARGET_DIR_ORIG)
+IB_TARGET_DIR=$(getvar TARGET_DIR)   # 注意：不能叫 TARGET_DIR，脚本顶部已用该名表示输出目录
 [ -n "$IB_TOPDIR" ] || IB_TOPDIR="$IB_DIR"
+# 相对路径补全成绝对路径
+case "$IB_TARGET_DIR" in /*) ;; *) IB_TARGET_DIR="$IB_DIR/$IB_TARGET_DIR" ;; esac
+case "$TARGET_DIR_ORIG" in /*) ;; *) TARGET_DIR_ORIG="$IB_DIR/$TARGET_DIR_ORIG" ;; esac
 echo "  TOPDIR=$IB_TOPDIR"
 echo "  BOARD=$BOARD"
-echo "  TARGET_ROOTFS_DIR=$TARGET_ROOTFS_DIR"
+echo "  IB_TARGET_DIR=$IB_TARGET_DIR"
 echo "  TARGET_DIR_ORIG=$TARGET_DIR_ORIG"
-ROOTFS_ORIG="$TARGET_DIR_ORIG"
-[ -n "$ROOTFS_ORIG" ] || ROOTFS_ORIG="$TARGET_ROOTFS_DIR/root.orig-$BOARD"
 
 # 顺手把 IB 的相关 Makefile 片段打出来，方便排查
 echo "  --- IB 根目录 ---"
@@ -191,22 +195,27 @@ mkdir -p "$OUTPUT_DIR"
 # 方案 B：先 make install 生成 rootfs 目录，把自定义文件放进去，
 #         再 make image 打包（apk add 不会删除额外的文件）
 cd "$IB_DIR"
-echo "  --- 预装 rootfs（make install）---"
-INSTALL_LOG="$WORKSPACE/install.log"
-if make install PROFILE="$PROFILE" PACKAGES="$PACKAGES" > "$INSTALL_LOG" 2>&1; then
-  echo "  ✓ make install 完成"
+echo "  --- 第一遍 make image（只为生成 rootfs 目录）---"
+FIRST_OUT="$WORKSPACE/out-firstpass"
+mkdir -p "$FIRST_OUT"
+if make image PROFILE="$PROFILE" PACKAGES="$PACKAGES" \
+     KERNELSIZE=64 ROOTFSPARTSIZE=400 PARTSIZE=480 BIN_DIR="$FIRST_OUT" \
+     > "$WORKSPACE/image-firstpass.log" 2>&1; then
+  echo "  ✓ 第一遍完成"
 else
-  echo "  ⚠️  make install 失败，错误输出："
-  tail -25 "$INSTALL_LOG" | sed 's/^/    /'
+  echo "  ⚠️  第一遍失败（不影响后续）："
+  tail -8 "$WORKSPACE/image-firstpass.log" | sed 's/^/    /'
 fi
 cd "$WORKSPACE"
 
-if [ -n "${ROOTFS_ORIG:-}" ] && [ "$ROOTFS_ORIG" != "/root.orig-" ] && [ -d "$ROOTFS_ORIG" ]; then
-  cp -a "$WORKSPACE/files/rootfs/." "$ROOTFS_ORIG/"
-  chmod +x "$ROOTFS_ORIG/etc/init.d/bbr" 2>/dev/null || true
-  echo "  ✓ 已注入到 $ROOTFS_ORIG"
+# 注入自定义文件到 rootfs 目录
+if [ -n "${IB_TARGET_DIR:-}" ] && [ -d "$IB_TARGET_DIR" ]; then
+  cp -a "$WORKSPACE/files/rootfs/." "$IB_TARGET_DIR/"
+  chmod +x "$IB_TARGET_DIR/etc/init.d/bbr" 2>/dev/null || true
+  echo "  ✓ 已注入到 $IB_TARGET_DIR"
+  find "$IB_TARGET_DIR" \( -name 'bbr' -o -name 'bbr.lua' \) 2>/dev/null | head -5 | sed 's/^/    /'
 else
-  echo "  ⚠️  rootfs 目录不存在或路径没探测到：$ROOTFS_ORIG"
+  echo "  ⚠️  rootfs 目录不存在：$IB_TARGET_DIR"
 fi
 
 cd "$IB_DIR"
