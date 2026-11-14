@@ -15,6 +15,9 @@ local m, s, o
 local sys = require "luci.sys"
 local uci = require "luci.model.uci"
 
+-- 页面版本号（改动页面时同步递增，方便确认是不是最新版）
+local PAGE_VERSION = "2026-11-15.2"
+
 -- 常见拥塞控制算法的中文/友好名称
 local ALGO_NAMES = {
 	bbr     = "BBR",
@@ -149,6 +152,10 @@ o.default = default_algo
 o.description = translate("BBR 适合高延迟、易丢包的线路（例如跨境代理）。选项来自内核实际支持的算法列表。")
 
 -- ===== 运行状态（实时读取内核）=====
+o = s:option(DummyValue, "page_version", translate("页面版本"))
+o.value = PAGE_VERSION
+o.description = translate("用于确认当前显示的是不是最新版本的页面。")
+
 o = s:option(DummyValue, "current_algorithm", translate("当前生效算法"))
 o.value = function()
 	return readfile("/proc/sys/net/ipv4/tcp_congestion_control") or "-"
