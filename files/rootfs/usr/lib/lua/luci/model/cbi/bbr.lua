@@ -4,8 +4,7 @@
 -- 交互设计：
 --   只给一个决定——选哪个拥塞控制算法。
 --   选 BBR = 开启 BBR 加速，选 CUBIC = 恢复系统默认，不另设开关。
---   选项文字自带语义标注（哪个是加速、哪个是系统默认），
---   当前实际生效的那个直接标成「（当前生效）」。
+--   选项文字自带语义标注（哪个是加速、哪个是系统默认）。
 --   下方状态区全部实时读内核，只展示真实状态。
 --
 -- 能生效的：拥塞控制算法（写 /proc/sys/net/ipv4/tcp_congestion_control）
@@ -25,7 +24,7 @@ local uci = require "luci.model.uci"
 local uci_cursor = uci.cursor()
 
 -- 页面版本号（改动页面时同步递增，方便确认是不是最新版）
-local PAGE_VERSION = "2026-11-15.4"
+local PAGE_VERSION = "2026-11-15.5"
 
 -- 拥塞控制算法的说明标注（key = 内核里的算法名）
 local ALGO_DESC = {
@@ -114,12 +113,13 @@ m = Map("bbr")
 m.title = translate("BBR 加速")
 m.description = translate("BBR 是 TCP 拥塞控制算法。路由器单纯做转发时用不到它；但当路由器作为代理客户端（本机主动建立到远端的 TCP 连接）时，BBR 能明显改善高延迟、易丢包线路上的吞吐。修改后点「保存并应用」立即生效，无需重启。")
 
+-- ===== 设置 =====
 s = m:section(TypedSection, "bbr")
 s.addremove = false
-s.anonymous = true
+s.anonymous = false
+s.title = translate("TCP 拥塞控制")
 
--- ===== 唯一的配置项 =====
-o = s:option(ListValue, "algorithm", translate("拥塞控制算法"))
+o = s:option(ListValue, "algorithm", translate("算法"))
 -- 动态列出内核实际支持的算法，避免出现内核里根本不存在的选项
 local avail = readfile("/proc/sys/net/ipv4/tcp_available_congestion_control") or ""
 local algos = {}
@@ -157,33 +157,36 @@ o.default = default_algo
 o.description = translate("选 BBR 就是开启 BBR 加速，不另设开关；选 CUBIC 就是恢复系统默认。选项来自内核实际支持的算法列表。BBR 适合高延迟、易丢包的线路（例如跨境代理）。")
 
 -- ===== 运行状态（实时读取内核）=====
-o = s:option(DummyValue, "page_version", translate("页面版本"))
+s2 = m:section(SimpleSection)
+s2.title = translate("运行状态")
+
+o = s2:option(DummyValue, "page_version", translate("页面版本"))
 o.value = PAGE_VERSION
 o.description = translate("用于确认当前显示的是不是最新版本的页面。")
 
-o = s:option(DummyValue, "current_algorithm", translate("当前生效算法"))
+o = s2:option(DummyValue, "current_algorithm", translate("当前生效算法"))
 o.value = function()
 	return readfile("/proc/sys/net/ipv4/tcp_congestion_control") or "-"
 end
 o.description = translate("内核此刻实际使用的拥塞控制算法。")
 
-o = s:option(DummyValue, "available_algorithms", translate("内核可用算法"))
+o = s2:option(DummyValue, "available_algorithms", translate("内核可用算法"))
 o.value = function()
 	return readfile("/proc/sys/net/ipv4/tcp_available_congestion_control") or "-"
 end
 o.description = translate("当前内核已编译进并可用的算法列表。")
 
-o = s:option(DummyValue, "default_qdisc", translate("内核默认队列调度"))
+o = s2:option(DummyValue, "default_qdisc", translate("内核默认队列调度"))
 o.value = function()
 	return readfile("/proc/sys/net/core/default_qdisc") or "-"
 end
 o.description = translate("OpenWrt 内核只编译了 fq_codel（未编 sch_fq 模块，写 fq 会报 ENOENT），且该参数由 netifd 接管不可修改。注意：fq_codel（FQ-CoDel）与 fq（sch_fq）是两个不同的内核模块，名字相似但完全不是一回事。BBR 不强制需要 fq——内核 4.13+ 有 TCP internal pacing 兜底，OpenWrt 官方标准组合就是 fq_codel + BBR。")
 
-o = s:option(DummyValue, "nic_qdisc", translate("各网卡实际调度"))
+o = s2:option(DummyValue, "nic_qdisc", translate("各网卡实际调度"))
 o.value = qdisc_list
 o.description = translate("每个网卡当前 root 队列使用的调度算法。")
 
-o = s:option(DummyValue, "module_state", translate("tcp_bbr 模块"))
+o = s2:option(DummyValue, "module_state", translate("tcp_bbr 模块"))
 o.value = function()
 	return module_loaded("tcp_bbr") and translate("已加载") or translate("未加载")
 end
