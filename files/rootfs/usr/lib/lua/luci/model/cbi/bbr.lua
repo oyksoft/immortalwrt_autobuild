@@ -24,7 +24,7 @@ local uci = require "luci.model.uci"
 local uci_cursor = uci.cursor()
 
 -- 页面版本号（改动页面时同步递增，方便确认是不是最新版）
-local PAGE_VERSION = "2026-11-15.5"
+local PAGE_VERSION = "2026-11-15.6"
 
 -- 拥塞控制算法的说明标注（key = 内核里的算法名）
 local ALGO_DESC = {
@@ -116,7 +116,9 @@ m.description = translate("BBR 是 TCP 拥塞控制算法。路由器单纯做�
 -- ===== 设置 =====
 s = m:section(TypedSection, "bbr")
 s.addremove = false
-s.anonymous = false
+-- anonymous = true：不渲染 UCI section 名（大写会变成 “MAIN”）；
+-- 但 self.title 的 <h3> 照常渲染，所以分组标题依然在
+s.anonymous = true
 s.title = translate("TCP 拥塞控制")
 
 o = s:option(ListValue, "algorithm", translate("算法"))
