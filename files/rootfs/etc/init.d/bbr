@@ -2,7 +2,10 @@
 # BBR 加速 —— 按 UCI 配置应用 TCP 拥塞控制算法与队列调度
 #
 # 用法：
-#   /etc/init.d/bbr apply    应用当前配置（LuCI 保存后自动调用）
+#   /etc/init.d/bbr reload   应用当前配置（LuCI 保存后自动调用）
+#
+# 注意：rc.common 只认 start/stop/restart/reload 等标准 action，
+#       “apply” 不是合法 action，会报 Unknown action。
 #
 # 禁用时会写 99-bbr-disable.conf，覆盖 kmod-tcp-bbr 自带的 12-tcp-bbr.conf，
 # 保证重启后依然是关闭状态（sysctl 按字典序加载，99 在 12 之后，后者生效）。
@@ -28,7 +31,7 @@ set_qdisc_all() {
 }
 
 apply() {
-	local enabled algorithm qdisc apply_qdisc
+	local enabled algorithm qdisc apply_qdisc rc=0
 	enabled=$(uci -q get bbr.main.enabled)
 	algorithm=$(uci -q get bbr.main.algorithm)
 	qdisc=$(uci -q get bbr.main.qdisc)
@@ -42,8 +45,8 @@ apply() {
 		modprobe tcp_bbr 2>/dev/null
 		# 移除禁用覆盖
 		rm -f "$DISABLE_CONF"
-		echo "$qdisc" > /proc/sys/net/core/default_qdisc 2>/dev/null
-		echo "$algorithm" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+		echo "$qdisc" > /proc/sys/net/core/default_qdisc 2>/dev/null || rc=1
+		echo "$algorithm" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || rc=1
 
 		# 可选：把现有网卡的队列也换成 fq
 		if [ "$apply_qdisc" = "1" ]; then
@@ -56,14 +59,18 @@ apply() {
 net.ipv4.tcp_congestion_control=cubic
 net.core.default_qdisc=pfifo_fast
 EOF
-		echo pfifo_fast > /proc/sys/net/core/default_qdisc 2>/dev/null
-		echo cubic > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+		echo pfifo_fast > /proc/sys/net/core/default_qdisc 2>/dev/null || rc=1
+		echo cubic > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || rc=1
 
 		# 恢复默认队列（仅当之前动过）
 		if [ "$apply_qdisc" = "1" ]; then
 			set_qdisc_all fq_codel
 		fi
 	fi
+
+	# 记一笔到日志，方便排查
+	logger -t bbr "enabled=$enabled want=$algorithm/$qdisc now=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)/$(cat /proc/sys/net/core/default_qdisc 2>/dev/null) rc=$rc"
+	return $rc
 }
 
 start() {
@@ -78,6 +85,7 @@ restart() {
 	apply
 }
 
+# LuCI 保存后、uci commit 后都会调 reload（标准 action）
 reload() {
 	apply
 }

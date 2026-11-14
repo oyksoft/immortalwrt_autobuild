@@ -136,9 +136,10 @@ end
 o.description = translate("未加载时无法切换到 BBR。")
 
 -- 保存后立即应用（先提交配置文件，再执行 init 脚本）
+-- 注意：reload 是 rc.common 的标准 action，“apply” 不是
 function m.on_commit(self)
 	self.uci:commit("bbr")
-	sh("/etc/init.d/bbr apply >/dev/null 2>&1")
+	sh("/etc/init.d/bbr reload >/dev/null 2>&1")
 end
 
 return m

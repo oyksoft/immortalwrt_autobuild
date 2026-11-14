@@ -47,7 +47,13 @@ if ! command -v tc >/dev/null 2>&1; then
     opkg install -y tc-tiny >/dev/null 2>&1 || true
   command -v tc >/dev/null 2>&1 && echo "  ✓ tc 已安装" || echo "  ⚠️  tc 安装失败（不影响 BBR 使用）"
 fi
-/etc/init.d/bbr apply
+# 注意：reload 才是 rc.common 的标准 action，apply 会报 Unknown action
+if ! /etc/init.d/bbr reload; then
+  echo "  ❌ /etc/init.d/bbr reload 执行失败"
+  /etc/init.d/bbr reload 2>&1 | head -5
+else
+  echo "  ✓ 配置已应用"
+fi
 echo "  当前拥塞控制算法：$(cat /proc/sys/net/ipv4/tcp_congestion_control)"
 echo "  内核默认队列调度：  $(cat /proc/sys/net/core/default_qdisc)"
 echo "  内核可用算法：      $(cat /proc/sys/net/ipv4/tcp_available_congestion_control)"
