@@ -25,7 +25,7 @@ local uci = require "luci.model.uci"
 local uci_cursor = uci.cursor()
 
 -- 页面版本号（改动页面时同步递增，方便确认是不是最新版）
-local PAGE_VERSION = "2026-11-15.3"
+local PAGE_VERSION = "2026-11-15.4"
 
 -- 拥塞控制算法的说明标注（key = 内核里的算法名）
 local ALGO_DESC = {
@@ -122,7 +122,6 @@ s.anonymous = true
 o = s:option(ListValue, "algorithm", translate("拥塞控制算法"))
 -- 动态列出内核实际支持的算法，避免出现内核里根本不存在的选项
 local avail = readfile("/proc/sys/net/ipv4/tcp_available_congestion_control") or ""
-local cur_algo = readfile("/proc/sys/net/ipv4/tcp_congestion_control") or ""
 local algos = {}
 for a in avail:gmatch("%S+") do
 	algos[#algos + 1] = a
@@ -143,12 +142,7 @@ if saved_algo and saved_algo ~= "" then
 	end
 end
 for _, a in ipairs(algos) do
-	local label = ALGO_DESC[a] or a
-	-- 当前实际生效的那个直接标在选项上
-	if a == cur_algo then
-		label = label .. "（当前生效）"
-	end
-	o:value(a, label)
+	o:value(a, ALGO_DESC[a] or a)
 end
 -- 默认值必须是列表里存在的
 local default_algo = "bbr"

@@ -111,17 +111,14 @@ end
 -- 交互设计：不应该有冗余的「启用 BBR」开关（选 BBR 就是启用）
 ok(find("enabled") == nil, "没有冗余的 enabled 开关（选算法即开关）")
 
--- 选项文字应带语义标注，且当前生效的被标出来
+-- 选项文字应带语义标注
 if algo then
 	local labeled = false
-	local marked = false
 	for _, it in ipairs(algo.values) do
 		local t = it.title or ""
 		if t:find("BBR") or t:find("CUBIC") then labeled = true end
-		if t:find("当前生效") then marked = true end
 	end
 	ok(labeled, "选项文字带语义标注（如「BBR（加速，推荐）」「CUBIC（系统默认）」）")
-	ok(marked, "当前生效的算法在选项里被标出")
 end
 
 local cur = find("current_algorithm")
