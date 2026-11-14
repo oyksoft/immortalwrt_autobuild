@@ -13,7 +13,10 @@
 
 local m, s, o
 local sys = require "luci.sys"
+-- luci.model.uci 模块里的方法都是 function xxx(self, ...) 形式，
+-- 必须先拿 cursor 实例再以方法方式调用，不能直接 uci.get(...)
 local uci = require "luci.model.uci"
+local uci_cursor = uci.cursor()
 
 -- 页面版本号（改动页面时同步递增，方便确认是不是最新版）
 local PAGE_VERSION = "2026-11-15.2"
@@ -126,7 +129,7 @@ if #algos == 0 then
 	algos = { "bbr", "cubic", "reno" }
 end
 -- 当前配置里的算法也纳入列表，避免下拉框显示为空
-local cur_algo = uci.get("bbr", "main", "algorithm")
+local cur_algo = uci_cursor:get("bbr", "main", "algorithm")
 if cur_algo and cur_algo ~= "" then
 	local found = false
 	for _, a in ipairs(algos) do

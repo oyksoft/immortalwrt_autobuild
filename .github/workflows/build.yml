@@ -34,6 +34,17 @@ jobs:
           BRANCH_SAFE=$(echo "$BRANCH_RAW" | sed 's:/:_:g; s:[^a-zA-Z0-9._-]:_:g')
           echo "branch_safe=$BRANCH_SAFE" >> "$GITHUB_OUTPUT"
 
+      - name: 校验自定义 Lua（语法 + 冒烟测试）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.1
+          echo '=== luac 语法检查 ==='
+          for f in $(find files/rootfs -name '*.lua'); do
+            luac5.1 -p "$f" && echo "  ✓ $f"
+          done
+          echo '=== CBI 冒烟测试 ==='
+          lua5.1 scripts/test-bbr-cbi.lua
+
       - name: 跑 ImageBuilder 构建脚本
         env:
           BRANCH: ${{ inputs.branch || '25.12.2' }}
