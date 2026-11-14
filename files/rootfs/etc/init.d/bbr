@@ -4,6 +4,11 @@
 # 用法：
 #   /etc/init.d/bbr reload   应用当前配置（LuCI 保存后自动调用）
 #
+# 只有一个配置项：bbr.main.algorithm
+#   bbr   → 开启 BBR 加速
+#   cubic → 恢复系统默认
+#   ...
+#
 # 注意：
 #   1. rc.common 只认 start/stop/restart/reload 等标准 action，
 #      “apply” 不是合法 action（会变成 help，什么都不做）。
@@ -19,29 +24,26 @@ STOP=98
 DISABLE_CONF=/etc/sysctl.d/99-bbr-disable.conf
 
 apply() {
-	local enabled algorithm rc=0
-	enabled=$(uci -q get bbr.main.enabled)
+	local algorithm rc=0
 	algorithm=$(uci -q get bbr.main.algorithm)
-	[ -n "$enabled" ] || enabled=0
 	[ -n "$algorithm" ] || algorithm=bbr
 
-	if [ "$enabled" = "1" ]; then
-		# 加载 bbr 内核模块（kmod-tcp-bbr 有自动探测，这里兜底）
-		modprobe tcp_bbr 2>/dev/null
-		# 移除禁用覆盖
+	# 加载 bbr 内核模块（kmod-tcp-bbr 有自动探测，这里兜底）
+	modprobe tcp_bbr 2>/dev/null
+
+	if [ "$algorithm" = "bbr" ]; then
+		# 选 BBR：移除任何覆盖，用内核自带配置 + 本脚本
 		rm -f "$DISABLE_CONF"
-		echo "$algorithm" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || rc=1
 	else
-		# 写开机覆盖文件（字典序在 12-tcp-bbr.conf 之后，最终生效）
-		cat > "$DISABLE_CONF" <<EOF
-# 由 /etc/init.d/bbr 生成：BBR 已禁用
-net.ipv4.tcp_congestion_control=cubic
-EOF
-		echo cubic > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || rc=1
+		# 选了别的算法：写覆盖文件压过 kmod 自带的 12-tcp-bbr.conf，
+		# 保证重启后仍然是选中的算法（sysctl 按字典序，99 在 12 之后）
+		echo "net.ipv4.tcp_congestion_control=$algorithm" > "$DISABLE_CONF"
 	fi
 
+	echo "$algorithm" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || rc=1
+
 	# 记一笔到日志，方便排查
-	logger -t bbr "enabled=$enabled want=$algorithm now=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null) rc=$rc"
+	logger -t bbr "want=$algorithm now=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null) rc=$rc"
 	return $rc
 }
 

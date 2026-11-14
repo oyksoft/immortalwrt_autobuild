@@ -1,15 +1,21 @@
 -- BBR 加速 —— LuCI CBI 模型
 -- 菜单位置：网络 → BBR 加速
 --
--- 设计原则：配置项只保留「真正能生效」的，状态项全部实时读内核。
---   能生效的：启用开关、拥塞控制算法（写 /proc/sys/net/ipv4/tcp_congestion_control）
---   只读状态：当前生效算法、内核可用算法、内核默认队列调度、各网卡实际调度、模块状态
+-- 交互设计：
+--   只给一个决定——选哪个拥塞控制算法。
+--   选 BBR = 开启 BBR 加速，选 CUBIC = 恢复系统默认，不另设开关。
+--   选项文字自带语义标注（哪个是加速、哪个是系统默认），
+--   当前实际生效的那个直接标成「（当前生效）」。
+--   下方状态区全部实时读内核，只展示真实状态。
+--
+-- 能生效的：拥塞控制算法（写 /proc/sys/net/ipv4/tcp_congestion_control）
+-- 只读状态：当前生效算法、内核可用算法、内核默认队列调度、各网卡实际调度、模块状态
 --
 -- 为什么不提供「队列调度」配置项：
 --   net.core.default_qdisc 在 OpenWrt 上由 netifd 接管，写不进去；
 --   现有网卡的队列（如 mq）在网卡创建时就定死了，改内核默认值也无效。
 --   BBR 并不强制需要 fq——内核 4.13+ 有 TCP internal pacing 兜底，
---   OpenWrt 官方默认组合就是 fq_codel + bbr。
+--   OpenWrt 官方标准组合就是 fq_codel + BBR。
 
 local m, s, o
 local sys = require "luci.sys"
@@ -19,17 +25,17 @@ local uci = require "luci.model.uci"
 local uci_cursor = uci.cursor()
 
 -- 页面版本号（改动页面时同步递增，方便确认是不是最新版）
-local PAGE_VERSION = "2026-11-15.2"
+local PAGE_VERSION = "2026-11-15.3"
 
--- 常见拥塞控制算法的中文/友好名称
-local ALGO_NAMES = {
-	bbr     = "BBR",
-	cubic   = "CUBIC",
-	reno    = "Reno",
-	hybla   = "HYBLA",
-	cake    = "CAKE",
-	htcp    = "H-TCP",
-	vegas   = "Vegas",
+-- 拥塞控制算法的说明标注（key = 内核里的算法名）
+local ALGO_DESC = {
+	bbr   = "BBR（加速，推荐）",
+	cubic = "CUBIC（系统默认）",
+	reno  = "Reno",
+	hybla = "HYBLA",
+	cake  = "CAKE",
+	htcp  = "H-TCP",
+	vegas = "Vegas",
 }
 
 -- 读文件（去掉尾部空白），读不到返回 nil
@@ -112,14 +118,11 @@ s = m:section(TypedSection, "bbr")
 s.addremove = false
 s.anonymous = true
 
-o = s:option(Flag, "enabled", translate("启用 BBR"))
-o.rmempty = false
-o.default = "1"
-o.description = translate("开启后使用 BBR 拥塞控制算法；关闭则恢复为系统默认的 CUBIC。")
-
+-- ===== 唯一的配置项 =====
 o = s:option(ListValue, "algorithm", translate("拥塞控制算法"))
 -- 动态列出内核实际支持的算法，避免出现内核里根本不存在的选项
 local avail = readfile("/proc/sys/net/ipv4/tcp_available_congestion_control") or ""
+local cur_algo = readfile("/proc/sys/net/ipv4/tcp_congestion_control") or ""
 local algos = {}
 for a in avail:gmatch("%S+") do
 	algos[#algos + 1] = a
@@ -129,18 +132,23 @@ if #algos == 0 then
 	algos = { "bbr", "cubic", "reno" }
 end
 -- 当前配置里的算法也纳入列表，避免下拉框显示为空
-local cur_algo = uci_cursor:get("bbr", "main", "algorithm")
-if cur_algo and cur_algo ~= "" then
+local saved_algo = uci_cursor:get("bbr", "main", "algorithm")
+if saved_algo and saved_algo ~= "" then
 	local found = false
 	for _, a in ipairs(algos) do
-		if a == cur_algo then found = true end
+		if a == saved_algo then found = true end
 	end
 	if not found then
-		algos[#algos + 1] = cur_algo
+		algos[#algos + 1] = saved_algo
 	end
 end
 for _, a in ipairs(algos) do
-	o:value(a, ALGO_NAMES[a] or a)
+	local label = ALGO_DESC[a] or a
+	-- 当前实际生效的那个直接标在选项上
+	if a == cur_algo then
+		label = label .. "（当前生效）"
+	end
+	o:value(a, label)
 end
 -- 默认值必须是列表里存在的
 local default_algo = "bbr"
@@ -152,7 +160,7 @@ if not has_bbr then
 	default_algo = algos[1]
 end
 o.default = default_algo
-o.description = translate("BBR 适合高延迟、易丢包的线路（例如跨境代理）。选项来自内核实际支持的算法列表。")
+o.description = translate("选 BBR 就是开启 BBR 加速，不另设开关；选 CUBIC 就是恢复系统默认。选项来自内核实际支持的算法列表。BBR 适合高延迟、易丢包的线路（例如跨境代理）。")
 
 -- ===== 运行状态（实时读取内核）=====
 o = s:option(DummyValue, "page_version", translate("页面版本"))

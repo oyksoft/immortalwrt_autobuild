@@ -62,7 +62,7 @@ function Map(config)
 		local s = { __type = cls, stype = stype, options = {} }
 		function s:option(c, name, title)
 			local o = { __type = c, name = name, title = title, values = {} }
-			function o:value(v, t) self.values[#self.values + 1] = v end
+			function o:value(v, t) self.values[#self.values + 1] = { value = v, title = t } end
 			function o:description(d) self.description = d end
 			function o:rmempty(v) self.rmempty = v end
 			function o:default(v) self.default = v end
@@ -102,10 +102,26 @@ if algo then
 	ok(#algo.values > 0, "algorithm 有可选值（" .. #algo.values .. " 个）")
 	ok(algo.default ~= nil, "algorithm 有默认值: " .. tostring(algo.default))
 	local found = false
-	for _, v in ipairs(algo.values) do
-		if v == algo.default then found = true end
+	for _, it in ipairs(algo.values) do
+		if it.value == algo.default then found = true end
 	end
 	ok(found, "默认值在可选值列表内（ListValue 要求，否则显示异常）")
+end
+
+-- 交互设计：不应该有冗余的「启用 BBR」开关（选 BBR 就是启用）
+ok(find("enabled") == nil, "没有冗余的 enabled 开关（选算法即开关）")
+
+-- 选项文字应带语义标注，且当前生效的被标出来
+if algo then
+	local labeled = false
+	local marked = false
+	for _, it in ipairs(algo.values) do
+		local t = it.title or ""
+		if t:find("BBR") or t:find("CUBIC") then labeled = true end
+		if t:find("当前生效") then marked = true end
+	end
+	ok(labeled, "选项文字带语义标注（如「BBR（加速，推荐）」「CUBIC（系统默认）」）")
+	ok(marked, "当前生效的算法在选项里被标出")
 end
 
 local cur = find("current_algorithm")
