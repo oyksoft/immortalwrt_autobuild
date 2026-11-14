@@ -165,7 +165,7 @@ o = s:option(DummyValue, "default_qdisc", translate("内核默认队列调度"))
 o.value = function()
 	return readfile("/proc/sys/net/core/default_qdisc") or "-"
 end
-o.description = translate("OpenWrt 内核只编译了 fq_codel（未编 fq/codel 模块，写 fq 会报 ENOENT），且该参数由 netifd 接管不可修改。BBR 不强制需要 fq——内核 4.13+ 有 TCP internal pacing 兜底，OpenWrt 官方标准组合就是 fq_codel + BBR。")
+o.description = translate("OpenWrt 内核只编译了 fq_codel（未编 sch_fq 模块，写 fq 会报 ENOENT），且该参数由 netifd 接管不可修改。注意：fq_codel（FQ-CoDel）与 fq（sch_fq）是两个不同的内核模块，名字相似但完全不是一回事。BBR 不强制需要 fq——内核 4.13+ 有 TCP internal pacing 兜底，OpenWrt 官方标准组合就是 fq_codel + BBR。")
 
 o = s:option(DummyValue, "nic_qdisc", translate("各网卡实际调度"))
 o.value = qdisc_list

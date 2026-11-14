@@ -171,6 +171,8 @@ PACKAGES 列表（`make image` 时 IB 会装这些）全部从这里提取。
 > - OpenWrt 内核只编译了 `fq_codel`（`CONFIG_NET_SCH_FQ` 未开启，写 `fq` 会报
 >   `ENOENT`），且 `net.core.default_qdisc` 由 netifd 接管不可修改
 >   → `fq_codel + BBR` 是 OpenWrt 上唯一且标准的组合，无需也无法调整
+> - ⚠️ **`fq_codel`（FQ-CoDel）和 `fq`（sch_fq）是两个不同的内核模块**，
+>   名字相似但完全不是一回事。OpenWrt 只有前者
 > - 与 SQM / Cake 冲突（本固件未装 sqm，无冲突）
 > - 内核模块 `kmod-tcp-bbr` 已在 `files/r66s.config` 里开启
 
