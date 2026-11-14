@@ -167,7 +167,10 @@ PACKAGES 列表（`make image` 时 IB 会装这些）全部从这里提取。
 > 是有效的（高延迟、易丢包的跨境线路收益明显）。
 >
 > **注意**
-> - 必须搭配 `fq` 队列调度（页面已默认）
+> - BBR **不强制需要 fq** 队列调度：内核 4.13+ 有 TCP internal pacing 兜底
+> - OpenWrt 内核只编译了 `fq_codel`（`CONFIG_NET_SCH_FQ` 未开启，写 `fq` 会报
+>   `ENOENT`），且 `net.core.default_qdisc` 由 netifd 接管不可修改
+>   → `fq_codel + BBR` 是 OpenWrt 上唯一且标准的组合，无需也无法调整
 > - 与 SQM / Cake 冲突（本固件未装 sqm，无冲突）
 > - 内核模块 `kmod-tcp-bbr` 已在 `files/r66s.config` 里开启
 
