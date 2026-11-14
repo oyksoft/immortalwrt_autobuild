@@ -63,6 +63,7 @@ if command -v tc >/dev/null 2>&1; then
     echo "    $d: $(tc qdisc show dev "$d" 2>/dev/null | head -1 | awk '{print $2}')"
   done
 fi
+echo "  日志：$(logread -e bbr | tail -1)"
 
 echo "=== [4/4] 清理 LuCI 菜单缓存 ==="
 rm -f /tmp/luci-indexcache* 2>/dev/null || true

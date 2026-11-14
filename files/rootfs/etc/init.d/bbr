@@ -1,75 +1,47 @@
 #!/bin/sh /etc/rc.common
-# BBR 加速 —— 按 UCI 配置应用 TCP 拥塞控制算法与队列调度
+# BBR 加速 —— 按 UCI 配置应用 TCP 拥塞控制算法
 #
 # 用法：
 #   /etc/init.d/bbr reload   应用当前配置（LuCI 保存后自动调用）
 #
-# 注意：rc.common 只认 start/stop/restart/reload 等标准 action，
-#       “apply” 不是合法 action，会报 Unknown action。
-#
-# 禁用时会写 99-bbr-disable.conf，覆盖 kmod-tcp-bbr 自带的 12-tcp-bbr.conf，
-# 保证重启后依然是关闭状态（sysctl 按字典序加载，99 在 12 之后，后者生效）。
-#
 # 注意：
-#   net.core.default_qdisc 只在「创建」队列时生效，对已经跑着的网卡无效。
-#   要让现有网卡用上 fq，必须 tc qdisc replace（需要 tc 命令）。
-#   内核 4.13+ 有 TCP internal pacing 兜底，所以 BBR 在 fq_codel 下也能正常工作。
+#   1. rc.common 只认 start/stop/restart/reload 等标准 action，
+#      “apply” 不是合法 action（会变成 help，什么都不做）。
+#   2. 这里只管 TCP 拥塞控制算法，不碰 net.core.default_qdisc——
+#      OpenWrt 上该参数由 netifd 接管，写不进去；而且现有网卡的
+#      队列（如 mq）在网卡创建时就定死了，改内核默认值也无效。
+#      BBR 并不强制需要 fq：内核 4.13+ 有 TCP internal pacing 兜底，
+#      OpenWrt 官方默认组合就是 fq_codel + bbr。
 
 START=98
 STOP=98
 
 DISABLE_CONF=/etc/sysctl.d/99-bbr-disable.conf
 
-# 把所有非 lo 网卡的 root 队列换成指定调度算法
-set_qdisc_all() {
-	local qdisc="$1" dev
-	command -v tc >/dev/null 2>&1 || return 0
-	for dev in $(ls /sys/class/net 2>/dev/null); do
-		[ "$dev" = "lo" ] && continue
-		tc qdisc replace dev "$dev" root "$qdisc" 2>/dev/null
-	done
-}
-
 apply() {
-	local enabled algorithm qdisc apply_qdisc rc=0
+	local enabled algorithm rc=0
 	enabled=$(uci -q get bbr.main.enabled)
 	algorithm=$(uci -q get bbr.main.algorithm)
-	qdisc=$(uci -q get bbr.main.qdisc)
-	apply_qdisc=$(uci -q get bbr.main.apply_qdisc)
 	[ -n "$enabled" ] || enabled=0
 	[ -n "$algorithm" ] || algorithm=bbr
-	[ -n "$qdisc" ] || qdisc=fq
 
 	if [ "$enabled" = "1" ]; then
 		# 加载 bbr 内核模块（kmod-tcp-bbr 有自动探测，这里兜底）
 		modprobe tcp_bbr 2>/dev/null
 		# 移除禁用覆盖
 		rm -f "$DISABLE_CONF"
-		echo "$qdisc" > /proc/sys/net/core/default_qdisc 2>/dev/null || rc=1
 		echo "$algorithm" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || rc=1
-
-		# 可选：把现有网卡的队列也换成 fq
-		if [ "$apply_qdisc" = "1" ]; then
-			set_qdisc_all "$qdisc"
-		fi
 	else
 		# 写开机覆盖文件（字典序在 12-tcp-bbr.conf 之后，最终生效）
 		cat > "$DISABLE_CONF" <<EOF
 # 由 /etc/init.d/bbr 生成：BBR 已禁用
 net.ipv4.tcp_congestion_control=cubic
-net.core.default_qdisc=pfifo_fast
 EOF
-		echo pfifo_fast > /proc/sys/net/core/default_qdisc 2>/dev/null || rc=1
 		echo cubic > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || rc=1
-
-		# 恢复默认队列（仅当之前动过）
-		if [ "$apply_qdisc" = "1" ]; then
-			set_qdisc_all fq_codel
-		fi
 	fi
 
 	# 记一笔到日志，方便排查
-	logger -t bbr "enabled=$enabled want=$algorithm/$qdisc now=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null)/$(cat /proc/sys/net/core/default_qdisc 2>/dev/null) rc=$rc"
+	logger -t bbr "enabled=$enabled want=$algorithm now=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null) rc=$rc"
 	return $rc
 }
 
