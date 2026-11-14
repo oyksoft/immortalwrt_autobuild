@@ -255,20 +255,20 @@ else
     echo "  --- 镜像文件类型 ---"
     file "$IMG_CHECK" 2>/dev/null | sed 's/^/    /' || true
     zcat "$IMG_CHECK" > /tmp/bbr-check.img 2>/dev/null || true
-    echo "  --- 解压后前 64 字节 ---"
-    od -A x -t x1z -N 64 /tmp/bbr-check.img 2>/dev/null | sed 's/^/    /' || true
-    for CAND in /tmp/bbr-check.img "$IB_DIR"/bin/targets/rockchip/armv8/*squashfs*.img; do
-      [ -f "$CAND" ] || continue
-      if "$UNSQUASH" -l "$CAND" 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua"; then
+    echo "  --- 镜像头部 ---"
+    od -A x -t x1z -N 32 /tmp/bbr-check.img 2>/dev/null | sed 's/^/    /' || true
+    # sysupgrade.img 是带 u-boot 头/分区的镜像，squashfs 不在偏移 0，
+    # 用 magic 'hsqs' 定位真正位置
+    OFF=$(grep -abo 'hsqs' /tmp/bbr-check.img 2>/dev/null | head -1 | cut -d: -f1)
+    echo "  · squashfs magic 偏移：${OFF:-未找到}"
+    if [ -n "$OFF" ]; then
+      tail -c +$((OFF + 1)) /tmp/bbr-check.img > /tmp/bbr-root.squashfs 2>/dev/null || true
+      echo "  --- 镜像内的 bbr 相关文件 ---"
+      "$UNSQUASH" -l /tmp/bbr-root.squashfs 2>/dev/null | grep -iE "bbr" | sed 's/^/      /' || true
+      if "$UNSQUASH" -l /tmp/bbr-root.squashfs 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua"; then
         FOUND=1
-        echo "  ✓ 在 $CAND 里找到："
-        "$UNSQUASH" -l "$CAND" 2>/dev/null | grep -E "bbr" | sed 's/^/      /'
-        break
+        echo "  ✓ 镜像内含 BBR 页面文件"
       fi
-    done
-    if [ "$FOUND" != "1" ]; then
-      echo "  · unsquashfs -l 的输出（可能不是 squashfs）："
-      "$UNSQUASH" -l /tmp/bbr-check.img 2>&1 | head -5 | sed 's/^/      /' || true
     fi
   else
     echo "  ⚠️  找不到 unsquashfs"
