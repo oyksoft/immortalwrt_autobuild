@@ -124,32 +124,6 @@ echo "=== [7/9] 下 luci-app-passwall apk 进 IB packages（UI 用）==="
 mkdir -p "$IB_DIR/packages"
 cd "$WORKSPACE"
 
-# === 把自定义文件做成 apk 包，放进 IB 的 packages/ 目录 ===
-# IB 会把 packages/ 里的本地包跟官方包一起 apk install 进 rootfs，
-# 这是 OpenWrt ImageBuilder 官方支持的“注入自定义文件”方式。
-echo "=== [7.5/9] 打包自定义文件为本地 apk（BBR 加速 UI 等）==="
-PKG_NAME="luci-app-bbr"
-PKG_VER="1.0.0"
-PKG_STAGE="$WORKSPACE/.pkgstage/$PKG_NAME"
-rm -rf "$PKG_STAGE"
-mkdir -p "$PKG_STAGE"
-cp -a "$WORKSPACE/files/rootfs/." "$PKG_STAGE/"
-chmod +x "$PKG_STAGE/etc/init.d/bbr" 2>/dev/null || true
-cat > "$PKG_STAGE/.PKGINFO" <<EOF
-pkgname = $PKG_NAME
-pkgver = $PKG_VER
-pkgdesc = BBR 加速 LuCI 页面（自定义）
-arch = all
-size = $(du -sk "$PKG_STAGE" | cut -f1)
-EOF
-mkdir -p "$IB_DIR/packages"
-tar -czf "$IB_DIR/packages/${PKG_NAME}-${PKG_VER}.apk" -C "$PKG_STAGE" .
-echo "  ✓ 已生成 ${PKG_NAME}-${PKG_VER}.apk"
-tar -tzf "$IB_DIR/packages/${PKG_NAME}-${PKG_VER}.apk" | sed 's/^/    /'
-
-# 加进安装列表（apk add 才会装它）
-echo "$PKG_NAME" >> packagelist.txt
-echo "  ✓ 已加入安装列表（包总数：$(wc -l < packagelist.txt)）"
 
 # 自动查 GitHub API 最新 release，取 tag_name 和对应 apk
 # asset 文件名带 "<BRANCH>_" 前缀（如 25.12+_luci-app-passwall-xxx.apk）
@@ -216,31 +190,52 @@ PACKAGES=$(tr '\n' ' ' < packagelist.txt)
 OUTPUT_DIR="$WORKSPACE/$TARGET_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-# 方案 B：先 make install 生成 rootfs 目录，把自定义文件放进去，
-#         再 make image 打包（apk add 不会删除额外的文件）
-cd "$IB_DIR"
-echo "  --- 第一遍 make image（只为生成 rootfs 目录）---"
-FIRST_OUT="$WORKSPACE/out-firstpass"
-mkdir -p "$FIRST_OUT"
-if make image PROFILE="$PROFILE" PACKAGES="$PACKAGES" \
-     KERNELSIZE=64 ROOTFSPARTSIZE=400 PARTSIZE=480 BIN_DIR="$FIRST_OUT" \
-     > "$WORKSPACE/image-firstpass.log" 2>&1; then
-  echo "  ✓ 第一遍完成"
-else
-  echo "  ⚠️  第一遍失败（不影响后续）："
-  tail -8 "$WORKSPACE/image-firstpass.log" | sed 's/^/    /'
-fi
-cd "$WORKSPACE"
+# --- hook：在 IB 的 package_install（装包到 rootfs）之后注入自定义文件 ---
+# 背景：
+#   - IB 没有 install target，且 make image 会重建 rootfs 目录，
+#     事后拷文件会被清掉。
+#   - 自制 apk 包方案也不行：v2 tar.gz 格式不被 apk 的 mkndx 识别，
+#     索引里找不到 → “unable to select packages: luci-app-bbr”。
+#   - 所以改为直接 hook package_install target 的 recipe 末尾，
+#     这时机 rootfs 目录刚装好、还没打包。
+echo "  --- hook package_install 注入自定义文件 ---"
+python3 - "$IB_DIR/Makefile" "$WORKSPACE/files/rootfs" <<'PYEOF'
+import re, sys
 
-# 注入自定义文件到 rootfs 目录
-if [ -n "${IB_TARGET_DIR:-}" ] && [ -d "$IB_TARGET_DIR" ]; then
-  cp -a "$WORKSPACE/files/rootfs/." "$IB_TARGET_DIR/"
-  chmod +x "$IB_TARGET_DIR/etc/init.d/bbr" 2>/dev/null || true
-  echo "  ✓ 已注入到 $IB_TARGET_DIR"
-  find "$IB_TARGET_DIR" \( -name 'bbr' -o -name 'bbr.lua' \) 2>/dev/null | head -5 | sed 's/^/    /'
-else
-  echo "  ⚠️  rootfs 目录不存在：$IB_TARGET_DIR"
-fi
+mkfile, filesdir = sys.argv[1], sys.argv[2]
+try:
+    lines = open(mkfile, encoding='utf-8').read().split('\n')
+except Exception as e:
+    print('  ⚠️ 读 Makefile 失败: %s' % e)
+    sys.exit(0)
+
+out, i, inserted = [], 0, False
+while i < len(lines):
+    line = lines[i]
+    out.append(line)
+    if re.match(r'^package_install:', line):
+        j = i + 1
+        while j < len(lines) and (lines[j].startswith('\t') or lines[j].strip() == ''):
+            out.append(lines[j])
+            j += 1
+        out.append('\t@echo "[inject] copying custom files into $(TARGET_DIR)"')
+        out.append('\t@mkdir -p $(TARGET_DIR) 2>/dev/null || true')
+        out.append('\t@cp -a %s/. $(TARGET_DIR)/ 2>/dev/null || true' % filesdir)
+        out.append('\t@chmod +x $(TARGET_DIR)/etc/init.d/bbr 2>/dev/null || true')
+        out.append('\t@ls -l $(TARGET_DIR)/etc/config/bbr $(TARGET_DIR)/etc/init.d/bbr 2>/dev/null || true')
+        out.append('\t@echo "[inject] done"')
+        inserted = True
+        i = j
+        continue
+    i += 1
+
+if not inserted:
+    print('  ⚠️  Makefile 里没找到 package_install target')
+    sys.exit(0)
+
+open(mkfile, 'w', encoding='utf-8').write('\n'.join(out))
+print('  ✓ 已在 package_install recipe 末尾插入注入命令')
+PYEOF
 
 cd "$IB_DIR"
 # 硬编码分区大小：IB 不读 r66s.config 里的 CONFIG_TARGET_*_PARTSIZE。
