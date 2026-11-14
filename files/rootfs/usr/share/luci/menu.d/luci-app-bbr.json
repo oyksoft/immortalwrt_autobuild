@@ -1,0 +1,10 @@
+{
+	"admin/network/bbr": {
+		"title": "BBR 加速",
+		"order": 60,
+		"action": {
+			"type": "cbi",
+			"path": "bbr"
+		}
+	}
+}

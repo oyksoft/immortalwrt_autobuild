@@ -1,0 +1,4 @@
+config bbr 'main'
+	option enabled '1'
+	option algorithm 'bbr'
+	option qdisc 'fq'

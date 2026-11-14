@@ -43,7 +43,11 @@ scripts/
 └── install-passwall-core.sh     # 刷机后手动装 passwall 核心
 files/
 ├── r66s.config                   # R66S 完整 PACKAGES（passwall 全套关掉，只留 UI）
-└── r66s.diffconfig               # review 用
+├── r66s.diffconfig               # review 用
+└── rootfs/                       # 注入固件的自定义文件（IB 会自动合并到 rootfs）
+    ├── etc/config/bbr            # BBR 加速 UCI 配置
+    ├── etc/init.d/bbr            # BBR 开机自动应用
+    └── usr/lib/lua/luci/…        # BBR 加速 LuCI 页面（网络 → BBR 加速）
 .github/workflows/build.yml      # GitHub Action
 ```
 
@@ -147,6 +151,30 @@ PACKAGES 列表（`make image` 时 IB 会装这些）全部从这里提取。
 |---|---|
 | `.github/workflows/build.yml` | 默认就好（除非换设备） |
 | `scripts/build-ib.sh` | 默认就好（除非加特殊 logic） |
+
+### BBR 加速（网络 → BBR 加速）
+
+固件自带 **BBR 加速** 页面（中文界面）：
+
+- **默认已开启** BBR 拥塞控制算法
+- 页面实时显示：当前生效算法 / 内核可用算法 / 当前队列调度 / tcp_bbr 模块是否加载
+- 可切换算法（BBR / CUBIC / Reno / HYBLA）与队列调度（fq / codel / pfifo_fast）
+- 开关切换**立即生效**，无需重启
+
+> **什么时候有用？**
+> BBR 是 TCP 端点算法，路由器单纯转发时用不到它。但本固件跑 Passwall，
+> sing-box / xray 在路由器本机建立到节点的 TCP 连接——这时候 BBR 对**代理出站链路**
+> 是有效的（高延迟、易丢包的跨境线路收益明显）。
+>
+> **注意**
+> - 必须搭配 `fq` 队列调度（页面已默认）
+> - 与 SQM / Cake 冲突（本固件未装 sqm，无冲突）
+> - 内核模块 `kmod-tcp-bbr` 已在 `files/r66s.config` 里开启
+
+**自定义文件注入机制**：ImageBuilder 会把 IB 根目录下的 `files/` 自动合并进固件 rootfs
+（见 OpenWrt `include/image.mk`：`prepare_rootfs(..., $(TOPDIR)/files)`）。
+`build-ib.sh` 第 [4/9] 步把 `files/rootfs/` 拷进 `$IB_DIR/files/`，所以新增自定义文件只需往
+`files/rootfs/` 里丢文件，不用改任何脚本。
 
 ### 分区大小
 

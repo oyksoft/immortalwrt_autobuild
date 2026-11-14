@@ -1,0 +1,62 @@
+#!/bin/sh /etc/rc.common
+# BBR 加速 —— 按 UCI 配置应用 TCP 拥塞控制算法与队列调度
+#
+# 用法：
+#   /etc/init.d/bbr apply    应用当前配置（LuCI 保存后自动调用）
+#
+# 禁用时会写 99-bbr-disable.conf，覆盖 kmod-tcp-bbr 自带的 12-tcp-bbr.conf，
+# 保证重启后依然是关闭状态（sysctl 按字典序加载，99 在 12 之后，后者生效）。
+
+START=98
+STOP=98
+
+DISABLE_CONF=/etc/sysctl.d/99-bbr-disable.conf
+
+apply() {
+	local enabled algorithm qdisc
+	enabled=$(uci -q get bbr.main.enabled)
+	algorithm=$(uci -q get bbr.main.algorithm)
+	qdisc=$(uci -q get bbr.main.qdisc)
+	[ -n "$enabled" ] || enabled=0
+	[ -n "$algorithm" ] || algorithm=bbr
+	[ -n "$qdisc" ] || qdisc=fq
+
+	if [ "$enabled" = "1" ]; then
+		# 加载 bbr 内核模块（kmod-tcp-bbr 有自动探测，这里兜底）
+		modprobe tcp_bbr 2>/dev/null
+		# 移除禁用覆盖
+		rm -f "$DISABLE_CONF"
+		echo "$qdisc" > /proc/sys/net/core/default_qdisc 2>/dev/null
+		echo "$algorithm" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+	else
+		# 写开机覆盖文件（字典序在 12-tcp-bbr.conf 之后，最终生效）
+		cat > "$DISABLE_CONF" <<EOF
+# 由 /etc/init.d/bbr 生成：BBR 已禁用
+net.ipv4.tcp_congestion_control=cubic
+net.core.default_qdisc=pfifo_fast
+EOF
+		echo pfifo_fast > /proc/sys/net/core/default_qdisc 2>/dev/null
+		echo cubic > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+	fi
+}
+
+start() {
+	apply
+}
+
+stop() {
+	echo cubic > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null
+}
+
+restart() {
+	apply
+}
+
+reload() {
+	apply
+}
+
+# uci commit bbr 时自动重载（LuCI 保存后立即生效）
+service_triggers() {
+	procd_add_reload_trigger bbr
+}

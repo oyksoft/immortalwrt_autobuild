@@ -19,19 +19,19 @@ TARGET_DIR="${TARGET_DIR:-out}"
 
 cd "$WORKSPACE"
 
-echo "=== [1/8] 下 ImageBuilder ==="
+echo "=== [1/9] 下 ImageBuilder ==="
 IB_URL="https://downloads.immortalwrt.org/releases/${BRANCH}/targets/rockchip/armv8/immortalwrt-imagebuilder-${BRANCH}-rockchip-armv8.Linux-x86_64.tar.zst"
 curl -fsSL "$IB_URL" -o ib.tar.zst
 ls -la ib.tar.zst
 
-echo "=== [2/8] 解压 ImageBuilder ==="
+echo "=== [2/9] 解压 ImageBuilder ==="
 mkdir -p ib-extracted
 tar --use-compress-program=zstd -xf ib.tar.zst -C ib-extracted
 IB_DIR=$(find ib-extracted -maxdepth 1 -type d -name 'immortalwrt-imagebuilder-*' | head -1)
 [ -z "$IB_DIR" ] && { echo "❌ 找不到 IB 目录"; ls ib-extracted/; exit 1; }
 echo "IB_DIR=$IB_DIR"
 
-echo "=== [3/8] 改 IB 内置分区大小（kernel 64MB + rootfs 400MB）==="
+echo "=== [3/9] 改 IB 内置分区大小（kernel 64MB + rootfs 400MB）==="
 # IB 默认用 ptgen -p 16m -p 300m 写死，不读 CONFIG_TARGET_*_PARTSIZE。
 # 直接改解压后的目录就行——make image 读的是这个目录，不是 tarball。
 if [ -f "$IB_DIR/.config" ]; then
@@ -51,7 +51,21 @@ for s in $ptgen_scripts; do
   echo "  ✓ ptgen 参数：$s"
 done
 
-echo "=== [4/8] 找 R66S profile ==="
+echo "=== [4/9] 注入自定义文件（BBR 加速 UI 等）==="
+# ImageBuilder 会把 IB 根目录下的 files/ 自动合并进固件 rootfs
+# （见 openwrt include/image.mk: prepare_rootfs(..., $(TOPDIR)/files)）
+if [ -d files/rootfs ]; then
+  mkdir -p "$IB_DIR/files"
+  cp -a files/rootfs/. "$IB_DIR/files/"
+  # git 在 Windows 下不保留可执行位，这里补上
+  chmod +x "$IB_DIR/files/etc/init.d/bbr" 2>/dev/null || true
+  echo "  ✓ 已注入 $(find files/rootfs -type f | wc -l) 个文件："
+  find files/rootfs -type f | sed 's|files/rootfs/|    |'
+else
+  echo "  ⚠️  files/rootfs 不存在，跳过自定义文件注入"
+fi
+
+echo "=== [5/9] 找 R66S profile ==="
 if [ -n "${USER_PROFILE:-}" ]; then
   PROFILE="$USER_PROFILE"
 else
@@ -64,7 +78,7 @@ else
 fi
 echo "PROFILE=$PROFILE"
 
-echo "=== [5/8] 提取 PACKAGES 列表 ==="
+echo "=== [6/9] 提取 PACKAGES 列表 ==="
 grep -E '^CONFIG_PACKAGE_' files/r66s.config | \
   sed 's/^CONFIG_PACKAGE_//; s/=y$//' | \
   # 不是真包（busybox variant/INCLUDE flag/dnsmasq full 子项/luci variant）
@@ -77,7 +91,7 @@ grep -E '^CONFIG_PACKAGE_' files/r66s.config | \
   sort -u > packagelist.txt
 echo "包数量：$(wc -l < packagelist.txt)"
 
-echo "=== [6/8] 下 luci-app-passwall apk 进 IB packages（UI 用）==="
+echo "=== [7/9] 下 luci-app-passwall apk 进 IB packages（UI 用）==="
 mkdir -p "$IB_DIR/packages"
 cd "$WORKSPACE"
 
@@ -135,11 +149,11 @@ for a in r.get('assets', []):
   fi
 fi
 
-echo "=== [7/8] make package_index ==="
+echo "=== [8/9] make package_index ==="
 cd "$IB_DIR"
 make package_index 2>&1 | tail -10
 
-echo "=== [8/8] make image ==="
+echo "=== [9/9] make image ==="
 cd "$WORKSPACE"  # packagelist.txt 在这
 PACKAGES=$(tr '\n' ' ' < packagelist.txt)
 # BIN_DIR 用绝对路径——避免相对路径跑到 ib-extracted/out
