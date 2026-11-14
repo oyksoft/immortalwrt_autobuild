@@ -40,10 +40,23 @@ ls -l /etc/config/bbr /etc/init.d/bbr \
 	/usr/lib/lua/luci/model/cbi/bbr.lua 2>&1 | sed 's/^/    /'
 
 echo "=== [3/4] 应用 BBR 配置 ==="
-/etc/init.d/bbr start
+# tc 命令用于查看/修改网卡队列调度，没有它就只能看内核默认调度
+if ! command -v tc >/dev/null 2>&1; then
+  echo "  tc 命令不存在，尝试从官方源安装 tc-tiny..."
+  apk add --no-interactive tc-tiny >/dev/null 2>&1 || \
+    opkg install -y tc-tiny >/dev/null 2>&1 || true
+  command -v tc >/dev/null 2>&1 && echo "  ✓ tc 已安装" || echo "  ⚠️  tc 安装失败（不影响 BBR 使用）"
+fi
+/etc/init.d/bbr apply
 echo "  当前拥塞控制算法：$(cat /proc/sys/net/ipv4/tcp_congestion_control)"
-echo "  当前队列调度：      $(cat /proc/sys/net/core/default_qdisc)"
+echo "  内核默认队列调度：  $(cat /proc/sys/net/core/default_qdisc)"
 echo "  内核可用算法：      $(cat /proc/sys/net/ipv4/tcp_available_congestion_control)"
+if command -v tc >/dev/null 2>&1; then
+  echo "  各网卡实际调度："
+  for d in $(ls /sys/class/net | grep -v lo); do
+    echo "    $d: $(tc qdisc show dev "$d" 2>/dev/null | head -1 | awk '{print $2}')"
+  done
+fi
 
 echo "=== [4/4] 清理 LuCI 菜单缓存 ==="
 rm -f /tmp/luci-indexcache* 2>/dev/null || true
