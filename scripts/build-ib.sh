@@ -73,10 +73,16 @@ ROOTFS_ORIG="$TARGET_DIR_ORIG"
 [ -n "$ROOTFS_ORIG" ] || ROOTFS_ORIG="$TARGET_ROOTFS_DIR/root.orig-$BOARD"
 
 # 顺手把 IB 的相关 Makefile 片段打出来，方便排查
-echo "  --- IB Makefile 里的 target ---"
-grep -nE "^(install|image|all|world):" "$IB_DIR/Makefile" 2>/dev/null | head -8 | sed 's/^/    /' || true
-echo "  --- prepare_rootfs 在 image.mk 的位置 ---"
-grep -n "prepare_rootfs" "$IB_DIR/include/image.mk" 2>/dev/null | head -4 | sed 's/^/    /' || true
+echo "  --- IB 根目录 ---"
+ls "$IB_DIR" 2>/dev/null | head -25 | sed 's/^/    /' || true
+echo "  --- IB Makefile ---"
+grep -vE "^\s*$" "$IB_DIR/Makefile" 2>/dev/null | head -30 | sed 's/^/    /' || true
+echo "  --- include 里的顶层 target ---"
+grep -rnE "^[a-zA-Z_.-]+:" "$IB_DIR/include/"*.mk 2>/dev/null | head -15 | sed 's/^/    /' || true
+echo "  --- image.mk 里的 rootfs 相关 ---"
+grep -nE "prepare_rootfs|TARGET_DIR_ORIG|root.orig" "$IB_DIR/include/image.mk" 2>/dev/null | head -8 | sed 's/^/    /' || true
+echo "  --- rootfs.mk 里的 root.orig 定义 ---"
+grep -n "root.orig" "$IB_DIR/include/rootfs.mk" 2>/dev/null | head -5 | sed 's/^/    /' || true
 
 # 方案 A：IB 根目录 files/（万一某些版本会用到，先放上）
 mkdir -p "$IB_TOPDIR/files"
@@ -186,10 +192,12 @@ mkdir -p "$OUTPUT_DIR"
 #         再 make image 打包（apk add 不会删除额外的文件）
 cd "$IB_DIR"
 echo "  --- 预装 rootfs（make install）---"
-if make install PROFILE="$PROFILE" PACKAGES="$PACKAGES" >/dev/null 2>&1; then
+INSTALL_LOG="$WORKSPACE/install.log"
+if make install PROFILE="$PROFILE" PACKAGES="$PACKAGES" > "$INSTALL_LOG" 2>&1; then
   echo "  ✓ make install 完成"
 else
-  echo "  ⚠️  make install 失败"
+  echo "  ⚠️  make install 失败，错误输出："
+  tail -25 "$INSTALL_LOG" | sed 's/^/    /'
 fi
 cd "$WORKSPACE"
 
