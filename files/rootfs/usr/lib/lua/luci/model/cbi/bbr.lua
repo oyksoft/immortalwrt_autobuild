@@ -13,6 +13,18 @@
 
 local m, s, o
 local sys = require "luci.sys"
+local uci = require "luci.model.uci"
+
+-- 常见拥塞控制算法的中文/友好名称
+local ALGO_NAMES = {
+	bbr     = "BBR",
+	cubic   = "CUBIC",
+	reno    = "Reno",
+	hybla   = "HYBLA",
+	cake    = "CAKE",
+	htcp    = "H-TCP",
+	vegas   = "Vegas",
+}
 
 -- 读文件（去掉尾部空白），读不到返回 nil
 local function readfile(path)
@@ -25,7 +37,11 @@ local function readfile(path)
 	if not v then
 		return nil
 	end
-	return (v:gsub("%s+$", ""))
+	v = v:gsub("%s+$", "")
+	if v == "" then
+		return nil
+	end
+	return v
 end
 
 -- 内核模块是否已加载
@@ -96,12 +112,41 @@ o.default = "1"
 o.description = translate("开启后使用 BBR 拥塞控制算法；关闭则恢复为系统默认的 CUBIC。")
 
 o = s:option(ListValue, "algorithm", translate("拥塞控制算法"))
-o:value("bbr", "BBR")
-o:value("cubic", "CUBIC")
-o:value("reno", "Reno")
-o:value("hybla", "HYBLA")
-o.default = "bbr"
-o.description = translate("BBR 适合高延迟、易丢包的线路（例如跨境代理）。可选算法以内核实际支持为准，见下方状态。")
+-- 动态列出内核实际支持的算法，避免出现内核里根本不存在的选项
+local avail = readfile("/proc/sys/net/ipv4/tcp_available_congestion_control") or ""
+local algos = {}
+for a in avail:gmatch("%S+") do
+	algos[#algos + 1] = a
+end
+if #algos == 0 then
+	-- 读不到时的兜底
+	algos = { "bbr", "cubic", "reno" }
+end
+-- 当前配置里的算法也纳入列表，避免下拉框显示为空
+local cur_algo = uci.get("bbr", "main", "algorithm")
+if cur_algo and cur_algo ~= "" then
+	local found = false
+	for _, a in ipairs(algos) do
+		if a == cur_algo then found = true end
+	end
+	if not found then
+		algos[#algos + 1] = cur_algo
+	end
+end
+for _, a in ipairs(algos) do
+	o:value(a, ALGO_NAMES[a] or a)
+end
+-- 默认值必须是列表里存在的
+local default_algo = "bbr"
+local has_bbr = false
+for _, a in ipairs(algos) do
+	if a == "bbr" then has_bbr = true end
+end
+if not has_bbr then
+	default_algo = algos[1]
+end
+o.default = default_algo
+o.description = translate("BBR 适合高延迟、易丢包的线路（例如跨境代理）。选项来自内核实际支持的算法列表。")
 
 -- ===== 运行状态（实时读取内核）=====
 o = s:option(DummyValue, "current_algorithm", translate("当前生效算法"))
