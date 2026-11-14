@@ -237,6 +237,14 @@ open(mkfile, 'w', encoding='utf-8').write('\n'.join(out))
 print('  ✓ 已在 package_install recipe 末尾插入注入命令')
 PYEOF
 
+# --- 把 IB Makefile 的关键片段 dump 出来（排查打包流程）---
+echo "  --- IB Makefile 所有 target ---"
+grep -nE "^[a-zA-Z_.-]+:" "$IB_DIR/Makefile" 2>/dev/null | head -30 | sed 's/^/    /' || true
+echo "  --- IB Makefile 240-300 行（package_install 附近）---"
+sed -n '240,300p' "$IB_DIR/Makefile" 2>/dev/null | sed 's/^/    /' || true
+echo "  --- IB Makefile 340-380 行（image / 打包附近）---"
+sed -n '340,380p' "$IB_DIR/Makefile" 2>/dev/null | sed 's/^/    /' || true
+
 cd "$IB_DIR"
 # 硬编码分区大小：IB 不读 r66s.config 里的 CONFIG_TARGET_*_PARTSIZE。
 # - KERNELSIZE：kernel 分区（MB）
@@ -281,15 +289,29 @@ else
 
   # squashfs 是压缩的，strings 搜不到——必须用 unsquashfs 列目录
   FOUND=0
-  if [ -x "$UNSQUASH" ]; then
-    zcat "$IMG_CHECK" > /tmp/bbr-check.squashfs 2>/dev/null || true
-    if "$UNSQUASH" -l /tmp/bbr-check.squashfs 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua"; then
-      FOUND=1
-      echo "  ✓ 镜像内含："
-      "$UNSQUASH" -l /tmp/bbr-check.squashfs 2>/dev/null | grep -E "bbr" | sed 's/^/      /'
+  if [ -n "$UNSQUASH" ]; then
+    echo "  --- 产物目录 ---"
+    ls -lh "$IB_DIR/bin/targets/rockchip/armv8/" 2>/dev/null | head -15 | sed 's/^/    /' || true
+    echo "  --- 镜像文件类型 ---"
+    file "$IMG_CHECK" 2>/dev/null | sed 's/^/    /' || true
+    zcat "$IMG_CHECK" > /tmp/bbr-check.img 2>/dev/null || true
+    echo "  --- 解压后前 64 字节 ---"
+    od -A x -t x1z -N 64 /tmp/bbr-check.img 2>/dev/null | sed 's/^/    /' || true
+    for CAND in /tmp/bbr-check.img "$IB_DIR"/bin/targets/rockchip/armv8/*squashfs*.img; do
+      [ -f "$CAND" ] || continue
+      if "$UNSQUASH" -l "$CAND" 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua"; then
+        FOUND=1
+        echo "  ✓ 在 $CAND 里找到："
+        "$UNSQUASH" -l "$CAND" 2>/dev/null | grep -E "bbr" | sed 's/^/      /'
+        break
+      fi
+    done
+    if [ "$FOUND" != "1" ]; then
+      echo "  · unsquashfs -l 的输出（可能不是 squashfs）："
+      "$UNSQUASH" -l /tmp/bbr-check.img 2>&1 | head -5 | sed 's/^/      /' || true
     fi
   else
-    echo "  ⚠️  没有 unsquashfs（$UNSQUASH）"
+    echo "  ⚠️  找不到 unsquashfs"
   fi
 
   if [ "$FOUND" = "1" ]; then
