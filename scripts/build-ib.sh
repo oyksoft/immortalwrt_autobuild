@@ -190,60 +190,19 @@ PACKAGES=$(tr '\n' ' ' < packagelist.txt)
 OUTPUT_DIR="$WORKSPACE/$TARGET_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-# --- hook：在 IB 的 package_install（装包到 rootfs）之后注入自定义文件 ---
-# 背景：
-#   - IB 没有 install target，且 make image 会重建 rootfs 目录，
-#     事后拷文件会被清掉。
-#   - 自制 apk 包方案也不行：v2 tar.gz 格式不被 apk 的 mkndx 识别，
-#     索引里找不到 → “unable to select packages: luci-app-bbr”。
-#   - 所以改为直接 hook package_install target 的 recipe 末尾，
-#     这时机 rootfs 目录刚装好、还没打包。
-echo "  --- hook package_install 注入自定义文件 ---"
-python3 - "$IB_DIR/Makefile" "$WORKSPACE/files/rootfs" <<'PYEOF'
-import re, sys
-
-mkfile, filesdir = sys.argv[1], sys.argv[2]
-try:
-    lines = open(mkfile, encoding='utf-8').read().split('\n')
-except Exception as e:
-    print('  ⚠️ 读 Makefile 失败: %s' % e)
-    sys.exit(0)
-
-out, i, inserted = [], 0, False
-while i < len(lines):
-    line = lines[i]
-    out.append(line)
-    if re.match(r'^package_install:', line):
-        j = i + 1
-        while j < len(lines) and (lines[j].startswith('\t') or lines[j].strip() == ''):
-            out.append(lines[j])
-            j += 1
-        out.append('\t@echo "[inject] copying custom files into $(TARGET_DIR)"')
-        out.append('\t@mkdir -p $(TARGET_DIR) 2>/dev/null || true')
-        out.append('\t@cp -a %s/. $(TARGET_DIR)/ 2>/dev/null || true' % filesdir)
-        out.append('\t@chmod +x $(TARGET_DIR)/etc/init.d/bbr 2>/dev/null || true')
-        out.append('\t@ls -l $(TARGET_DIR)/etc/config/bbr $(TARGET_DIR)/etc/init.d/bbr 2>/dev/null || true')
-        out.append('\t@echo "[inject] done"')
-        inserted = True
-        i = j
-        continue
-    i += 1
-
-if not inserted:
-    print('  ⚠️  Makefile 里没找到 package_install target')
-    sys.exit(0)
-
-open(mkfile, 'w', encoding='utf-8').write('\n'.join(out))
-print('  ✓ 已在 package_install recipe 末尾插入注入命令')
-PYEOF
-
-# --- 把 IB Makefile 的关键片段 dump 出来（排查打包流程）---
-echo "  --- IB Makefile 所有 target ---"
-grep -nE "^[a-zA-Z_.-]+:" "$IB_DIR/Makefile" 2>/dev/null | head -30 | sed 's/^/    /' || true
-echo "  --- IB Makefile 240-300 行（package_install 附近）---"
-sed -n '240,300p' "$IB_DIR/Makefile" 2>/dev/null | sed 's/^/    /' || true
-echo "  --- IB Makefile 340-380 行（image / 打包附近）---"
-sed -n '340,380p' "$IB_DIR/Makefile" 2>/dev/null | sed 's/^/    /' || true
+# --- 注入自定义文件：用 IB 官方的 USER_FILES 变量 ---
+# IB Makefile 里 prepare_rootfs target 会执行：
+#     $(call prepare_rootfs,$(TARGET_DIR),$(USER_FILES),$(DISABLED_SERVICES))
+# 第二个参数就是 USER_FILES，其目录内容会被拷进 rootfs。
+# 所以只要 make image 时传 USER_FILES=<目录> 即可，官方支持的方式。
+# （之前误以为机制是 $(TOPDIR)/files，实际 IB 的 include/image.mk 里并没有 prepare_rootfs）
+echo "  --- 注入自定义文件（USER_FILES）---"
+if [ -d "$WORKSPACE/files/rootfs" ]; then
+  echo "  ✓ USER_FILES=$WORKSPACE/files/rootfs"
+  find "$WORKSPACE/files/rootfs" -type f | sed "s|$WORKSPACE/files/rootfs/|    |"
+else
+  echo "  ⚠️  files/rootfs 不存在"
+fi
 
 cd "$IB_DIR"
 # 硬编码分区大小：IB 不读 r66s.config 里的 CONFIG_TARGET_*_PARTSIZE。
@@ -255,6 +214,7 @@ set -o pipefail
 make image \
   PROFILE="$PROFILE" \
   PACKAGES="$PACKAGES" \
+  USER_FILES="$WORKSPACE/files/rootfs" \
   KERNELSIZE=64 \
   ROOTFSPARTSIZE=400 \
   PARTSIZE=480 \
