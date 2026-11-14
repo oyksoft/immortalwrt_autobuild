@@ -57,24 +57,26 @@ echo "=== [4/9] 注入自定义文件（BBR 加速 UI 等）==="
 # 所以文件必须直接进 rootfs 目录。
 cd "$IB_DIR"
 
-# 探测 IB 的 make 变量
-probe() {
-  make -pn 2>/dev/null | grep -E "^$1[[:space:]]*[:?]?=" | head -1 | sed "s/^$1[[:space:]]*[:?]*=[[:space:]]*//"
-}
-IB_TOPDIR=$(probe TOPDIR)
-BOARD=$(probe BOARD)
-TARGET_ROOTFS_DIR=$(probe TARGET_ROOTFS_DIR)
+# 探测 IB 的 make 变量（make -pn 给的是未展开的定义，用 --eval 拿展开后的值）
+VARS=$(make --eval='print-vars: ; @echo "V_BOARD=$(BOARD)"; echo "V_BUILD_DIR=$(BUILD_DIR)"; echo "V_TARGET_ROOTFS_DIR=$(TARGET_ROOTFS_DIR)"; echo "V_TARGET_DIR_ORIG=$(TARGET_DIR_ORIG)"; echo "V_TOPDIR=$(TOPDIR)"' print-vars 2>/dev/null || true)
+getvar() { echo "$VARS" | grep "^V_$1=" | head -1 | cut -d= -f2- || true; }
+IB_TOPDIR=$(getvar TOPDIR)
+BOARD=$(getvar BOARD)
+TARGET_ROOTFS_DIR=$(getvar TARGET_ROOTFS_DIR)
+TARGET_DIR_ORIG=$(getvar TARGET_DIR_ORIG)
 [ -n "$IB_TOPDIR" ] || IB_TOPDIR="$IB_DIR"
 echo "  TOPDIR=$IB_TOPDIR"
 echo "  BOARD=$BOARD"
 echo "  TARGET_ROOTFS_DIR=$TARGET_ROOTFS_DIR"
-ROOTFS_ORIG="$TARGET_ROOTFS_DIR/root.orig-$BOARD"
+echo "  TARGET_DIR_ORIG=$TARGET_DIR_ORIG"
+ROOTFS_ORIG="$TARGET_DIR_ORIG"
+[ -n "$ROOTFS_ORIG" ] || ROOTFS_ORIG="$TARGET_ROOTFS_DIR/root.orig-$BOARD"
 
 # 顺手把 IB 的相关 Makefile 片段打出来，方便排查
 echo "  --- IB Makefile 里的 target ---"
-grep -nE "^(install|image|all|world):" "$IB_DIR/Makefile" 2>/dev/null | head -8 | sed 's/^/    /'
+grep -nE "^(install|image|all|world):" "$IB_DIR/Makefile" 2>/dev/null | head -8 | sed 's/^/    /' || true
 echo "  --- prepare_rootfs 在 image.mk 的位置 ---"
-grep -n "prepare_rootfs" "$IB_DIR/include/image.mk" 2>/dev/null | head -4 | sed 's/^/    /'
+grep -n "prepare_rootfs" "$IB_DIR/include/image.mk" 2>/dev/null | head -4 | sed 's/^/    /' || true
 
 # 方案 A：IB 根目录 files/（万一某些版本会用到，先放上）
 mkdir -p "$IB_TOPDIR/files"
@@ -182,22 +184,21 @@ mkdir -p "$OUTPUT_DIR"
 
 # 方案 B：先 make install 生成 rootfs 目录，把自定义文件放进去，
 #         再 make image 打包（apk add 不会删除额外的文件）
-if [ -n "${ROOTFS_ORIG:-}" ] && [ "$ROOTFS_ORIG" != "/root.orig-" ]; then
-  echo "  --- 预装 rootfs（make install）---"
-  cd "$IB_DIR"
-  if make install PROFILE="$PROFILE" PACKAGES="$PACKAGES" >/dev/null 2>&1; then
-    if [ -d "$ROOTFS_ORIG" ]; then
-      cp -a "$WORKSPACE/files/rootfs/." "$ROOTFS_ORIG/"
-      chmod +x "$ROOTFS_ORIG/etc/init.d/bbr" 2>/dev/null || true
-      echo "  ✓ 已注入到 $ROOTFS_ORIG"
-    else
-      echo "  ⚠️  rootfs 目录不存在：$ROOTFS_ORIG"
-      echo "      实际内容：$(ls "$TARGET_ROOTFS_DIR" 2>/dev/null | head -5 | tr '\n' ' ')"
-    fi
-  else
-    echo "  ⚠️  make install 失败，跳过方案 B"
-  fi
-  cd "$WORKSPACE"
+cd "$IB_DIR"
+echo "  --- 预装 rootfs（make install）---"
+if make install PROFILE="$PROFILE" PACKAGES="$PACKAGES" >/dev/null 2>&1; then
+  echo "  ✓ make install 完成"
+else
+  echo "  ⚠️  make install 失败"
+fi
+cd "$WORKSPACE"
+
+if [ -n "${ROOTFS_ORIG:-}" ] && [ "$ROOTFS_ORIG" != "/root.orig-" ] && [ -d "$ROOTFS_ORIG" ]; then
+  cp -a "$WORKSPACE/files/rootfs/." "$ROOTFS_ORIG/"
+  chmod +x "$ROOTFS_ORIG/etc/init.d/bbr" 2>/dev/null || true
+  echo "  ✓ 已注入到 $ROOTFS_ORIG"
+else
+  echo "  ⚠️  rootfs 目录不存在或路径没探测到：$ROOTFS_ORIG"
 fi
 
 cd "$IB_DIR"
