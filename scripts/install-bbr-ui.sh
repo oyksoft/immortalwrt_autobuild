@@ -30,11 +30,12 @@ echo "  ✓ 源码目录：$SRC"
 
 echo "=== [2/4] 拷贝文件到系统 ==="
 [ -f "$SRC/files/rootfs/etc/config/bbr" ] || { echo "❌ 源文件缺失"; exit 1; }
+# 旧版用 menu.d/*.json 注册菜单，在新版 LuCI 会触发 dispatch 递归，需清掉
+rm -f /usr/share/luci/menu.d/luci-app-bbr.json
 cp -a "$SRC/files/rootfs/." /
 chmod +x /etc/init.d/bbr
 echo "  ✓ 已安装："
 ls -l /etc/config/bbr /etc/init.d/bbr \
-	/usr/share/luci/menu.d/luci-app-bbr.json \
 	/usr/lib/lua/luci/controller/bbr.lua \
 	/usr/lib/lua/luci/model/cbi/bbr.lua 2>&1 | sed 's/^/    /'
 

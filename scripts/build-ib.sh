@@ -54,13 +54,27 @@ done
 echo "=== [4/9] 注入自定义文件（BBR 加速 UI 等）==="
 # ImageBuilder 会把 IB 根目录下的 files/ 自动合并进固件 rootfs
 # （见 openwrt include/image.mk: prepare_rootfs(..., $(TOPDIR)/files)）
+# 但 IB 里 TOPDIR 到底指向哪要实测，所以先探测再拷到正确位置。
 if [ -d files/rootfs ]; then
-  mkdir -p "$IB_DIR/files"
-  cp -a files/rootfs/. "$IB_DIR/files/"
-  # git 在 Windows 下不保留可执行位，这里补上
-  chmod +x "$IB_DIR/files/etc/init.d/bbr" 2>/dev/null || true
-  echo "  ✓ 已注入 $(find files/rootfs -type f | wc -l) 个文件："
-  find files/rootfs -type f | sed 's|files/rootfs/|    |'
+  cd "$IB_DIR"
+
+  # 探测 IB 的 TOPDIR（make -pn 只解析 Makefile，不执行目标）
+  IB_TOPDIR=$(make -pn 2>/dev/null | grep -E "^TOPDIR[[:space:]]*[:?]?=" | head -1 | sed 's/^TOPDIR[[:space:]]*[:?]*=[[:space:]]*//')
+  [ -n "$IB_TOPDIR" ] || IB_TOPDIR="$IB_DIR"
+  echo "  IB_TOPDIR = $IB_TOPDIR"
+
+  # 候选位置：TOPDIR/files 与 IB 根目录/files（保险起见两处都放）
+  for d in "$IB_TOPDIR/files" "$IB_DIR/files"; do
+    mkdir -p "$d"
+    cp -a files/rootfs/. "$d/" 2>/dev/null || cp -a "$WORKSPACE/files/rootfs/." "$d/"
+    chmod +x "$d/etc/init.d/bbr" 2>/dev/null || true
+    echo "  ✓ 已注入到 $d"
+  done
+
+  echo "  注入文件清单："
+  find "$WORKSPACE/files/rootfs" -type f | sed "s|$WORKSPACE/files/rootfs/|    |"
+
+  cd "$WORKSPACE"
 else
   echo "  ⚠️  files/rootfs 不存在，跳过自定义文件注入"
 fi
@@ -183,3 +197,14 @@ fi
 
 echo "=== 产物 ==="
 ls -la "$OUTPUT_DIR/" 2>&1 | head -20
+
+# 自检：确认自定义文件真的进了固件（注入失败时能第一时间发现）
+echo "=== 自检：自定义文件是否进固件 ==="
+IMG_CHECK=$(ls "$OUTPUT_DIR"/*squashfs-sysupgrade.img.gz 2>/dev/null | head -1)
+if [ -z "$IMG_CHECK" ]; then
+  echo "  ⚠️  找不到 sysupgrade 镜像，跳过自检"
+elif zcat "$IMG_CHECK" 2>/dev/null | strings 2>/dev/null | grep -q "BBR 加速"; then
+  echo "  ✓ 自检通过：BBR 页面已包含在固件中"
+else
+  echo "  ❌ 自检失败：自定义文件没进固件（注入机制需重新排查）"
+fi
