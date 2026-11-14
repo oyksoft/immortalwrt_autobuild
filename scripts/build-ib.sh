@@ -52,32 +52,38 @@ for s in $ptgen_scripts; do
 done
 
 echo "=== [4/9] 注入自定义文件（BBR 加速 UI 等）==="
-# ImageBuilder 会把 IB 根目录下的 files/ 自动合并进固件 rootfs
-# （见 openwrt include/image.mk: prepare_rootfs(..., $(TOPDIR)/files)）
-# 但 IB 里 TOPDIR 到底指向哪要实测，所以先探测再拷到正确位置。
-if [ -d files/rootfs ]; then
-  cd "$IB_DIR"
+# IB 的 rootfs 是 apk 装包生成的（$(TARGET_DIR_ORIG) → $(TARGET_DIR) → 镜像），
+# 源码编译路径用的 prepare_rootfs(..., $(TOPDIR)/files) 在 IB 里不会被调用，
+# 所以文件必须直接进 rootfs 目录。
+cd "$IB_DIR"
 
-  # 探测 IB 的 TOPDIR（make -pn 只解析 Makefile，不执行目标）
-  IB_TOPDIR=$(make -pn 2>/dev/null | grep -E "^TOPDIR[[:space:]]*[:?]?=" | head -1 | sed 's/^TOPDIR[[:space:]]*[:?]*=[[:space:]]*//')
-  [ -n "$IB_TOPDIR" ] || IB_TOPDIR="$IB_DIR"
-  echo "  IB_TOPDIR = $IB_TOPDIR"
+# 探测 IB 的 make 变量
+probe() {
+  make -pn 2>/dev/null | grep -E "^$1[[:space:]]*[:?]?=" | head -1 | sed "s/^$1[[:space:]]*[:?]*=[[:space:]]*//"
+}
+IB_TOPDIR=$(probe TOPDIR)
+BOARD=$(probe BOARD)
+TARGET_ROOTFS_DIR=$(probe TARGET_ROOTFS_DIR)
+[ -n "$IB_TOPDIR" ] || IB_TOPDIR="$IB_DIR"
+echo "  TOPDIR=$IB_TOPDIR"
+echo "  BOARD=$BOARD"
+echo "  TARGET_ROOTFS_DIR=$TARGET_ROOTFS_DIR"
+ROOTFS_ORIG="$TARGET_ROOTFS_DIR/root.orig-$BOARD"
 
-  # 候选位置：TOPDIR/files 与 IB 根目录/files（保险起见两处都放）
-  for d in "$IB_TOPDIR/files" "$IB_DIR/files"; do
-    mkdir -p "$d"
-    cp -a files/rootfs/. "$d/" 2>/dev/null || cp -a "$WORKSPACE/files/rootfs/." "$d/"
-    chmod +x "$d/etc/init.d/bbr" 2>/dev/null || true
-    echo "  ✓ 已注入到 $d"
-  done
+# 顺手把 IB 的相关 Makefile 片段打出来，方便排查
+echo "  --- IB Makefile 里的 target ---"
+grep -nE "^(install|image|all|world):" "$IB_DIR/Makefile" 2>/dev/null | head -8 | sed 's/^/    /'
+echo "  --- prepare_rootfs 在 image.mk 的位置 ---"
+grep -n "prepare_rootfs" "$IB_DIR/include/image.mk" 2>/dev/null | head -4 | sed 's/^/    /'
 
-  echo "  注入文件清单："
-  find "$WORKSPACE/files/rootfs" -type f | sed "s|$WORKSPACE/files/rootfs/|    |"
+# 方案 A：IB 根目录 files/（万一某些版本会用到，先放上）
+mkdir -p "$IB_TOPDIR/files"
+cp -a "$WORKSPACE/files/rootfs/." "$IB_TOPDIR/files/" 2>/dev/null || true
+chmod +x "$IB_TOPDIR/files/etc/init.d/bbr" 2>/dev/null || true
 
-  cd "$WORKSPACE"
-else
-  echo "  ⚠️  files/rootfs 不存在，跳过自定义文件注入"
-fi
+cd "$WORKSPACE"
+echo "  注入文件清单："
+find "$WORKSPACE/files/rootfs" -type f | sed "s|$WORKSPACE/files/rootfs/|    |"
 
 echo "=== [5/9] 找 R66S profile ==="
 if [ -n "${USER_PROFILE:-}" ]; then
@@ -173,6 +179,27 @@ PACKAGES=$(tr '\n' ' ' < packagelist.txt)
 # BIN_DIR 用绝对路径——避免相对路径跑到 ib-extracted/out
 OUTPUT_DIR="$WORKSPACE/$TARGET_DIR"
 mkdir -p "$OUTPUT_DIR"
+
+# 方案 B：先 make install 生成 rootfs 目录，把自定义文件放进去，
+#         再 make image 打包（apk add 不会删除额外的文件）
+if [ -n "${ROOTFS_ORIG:-}" ] && [ "$ROOTFS_ORIG" != "/root.orig-" ]; then
+  echo "  --- 预装 rootfs（make install）---"
+  cd "$IB_DIR"
+  if make install PROFILE="$PROFILE" PACKAGES="$PACKAGES" >/dev/null 2>&1; then
+    if [ -d "$ROOTFS_ORIG" ]; then
+      cp -a "$WORKSPACE/files/rootfs/." "$ROOTFS_ORIG/"
+      chmod +x "$ROOTFS_ORIG/etc/init.d/bbr" 2>/dev/null || true
+      echo "  ✓ 已注入到 $ROOTFS_ORIG"
+    else
+      echo "  ⚠️  rootfs 目录不存在：$ROOTFS_ORIG"
+      echo "      实际内容：$(ls "$TARGET_ROOTFS_DIR" 2>/dev/null | head -5 | tr '\n' ' ')"
+    fi
+  else
+    echo "  ⚠️  make install 失败，跳过方案 B"
+  fi
+  cd "$WORKSPACE"
+fi
+
 cd "$IB_DIR"
 # 硬编码分区大小：IB 不读 r66s.config 里的 CONFIG_TARGET_*_PARTSIZE。
 # - KERNELSIZE：kernel 分区（MB）
