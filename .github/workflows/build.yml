@@ -22,6 +22,10 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    # 避免定时构建与手动触发同时跑（会争抢 release tag）
+    concurrency:
+      group: build-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - name: 拉取代码
         uses: actions/checkout@v5
@@ -88,8 +92,9 @@ jobs:
           fi
           echo '=== artifact/ 内容 ==='
           ls -lh artifact/
-          echo '=== sha256 ==='
-          sha256sum artifact/*
+          echo '=== 生成 sha256 校验文件 ==='
+          ( cd artifact && sha256sum *.img.gz > SHA256SUMS )
+          cat artifact/SHA256SUMS | sed 's/^/  /'
 
       - name: 上传固件到 Actions Artifacts（7 天后过期）
         if: success()

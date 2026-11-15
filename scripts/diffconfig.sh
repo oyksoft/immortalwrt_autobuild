@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# 从完整 .config 抽取紧凑版 diffconfig（仅保留与默认不同的选项）。
+# 从完整 .config 抽取「已启用项」清单（用于快速 review）。
+# 注意：这不是真正的 diffconfig（那需要跟默认配置逐项对比），
+#       这里的输出仍包含大量默认值，体积约为完整 .config 的 1/10。
 # 用法：./scripts/diffconfig.sh <.config 路径> [输出文件]
 set -euo pipefail
 

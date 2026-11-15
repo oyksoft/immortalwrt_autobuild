@@ -1,91 +1,97 @@
 #!/bin/sh
 # install-passwall-core.sh
-# 在 R66S 上跑：装 passwall 核心包 + luci-app-passwall UI + passwall 中文
+# 在 R66S 上跑：安装 passwall 核心（/usr/share/passwall 下的 Lua 脚本集）
 #
-# 我们的 IB build 已经把 luci-app-passwall + luci-i18n-passwall-zh-cn
-# 塞到 /etc/apk/cache/ 了。问题是 passwall 核心包（Lua 脚本集）不在
-# 任何 ImmortalWrt/Openwrt release 仓里——必须手动装。
+# 背景：
+#   固件里已预装 luci-app-passwall（UI）+ luci-i18n-passwall-zh-cn + 各代理引擎
+#   （sing-box / xray-core / hysteria 等）。
+#   但 passwall 核心包不在任何 ImmortalWrt/OpenWrt 预编译仓里——
+#   Openwrt-Passwall 仓只 source build，没有 release apk。
+#   所以这里从 GitHub 拉源码，把文件手动装到系统目录。
 #
-# 这个脚本：从 GitHub 拉 passwall 核心源码 → 手动 cp 到系统目录 → 
-# 喂给 opkg 一个"假"包信息 → 然后 opkg install luci-app-passwall
+# 兼容 apk（OpenWrt 25.12+）和 opkg（旧版）。
 
 set -e
 
-echo "=== [1/5] 准备工具 ==="
-opkg update
-opkg install wget tar xz findutils
+echo "=== passwall 核心安装 ==="
 
-echo "=== [2/5] 下 passwall 核心源码（openwrt-passwall-packages 仓）==="
+# --- 检测包管理器 ---
+if command -v apk >/dev/null 2>&1; then
+	PKG="apk"
+elif command -v opkg >/dev/null 2>&1; then
+	PKG="opkg"
+else
+	echo "❌ 找不到 apk / opkg，无法继续"
+	exit 1
+fi
+echo "包管理器：$PKG"
+
+# --- 准备工具（wget/tar busybox 自带，缺了再装）---
+command -v wget >/dev/null 2>&1 || $PKG add wget >/dev/null 2>&1 || $PKG install wget >/dev/null 2>&1 || true
+command -v tar  >/dev/null 2>&1 || $PKG add tar  >/dev/null 2>&1 || $PKG install tar  >/dev/null 2>&1 || true
+
+echo "=== [1/4] 下 passwall 核心源码 ==="
 cd /tmp
-rm -rf passwall-pkg
-wget -q -O passwall.tar.gz \
-  "https://github.com/immortalwrt/openwrt-passwall-packages/archive/refs/heads/openwrt-25.12.tar.gz" \
-  || wget -q -O passwall.tar.gz \
-     "https://github.com/Openwrt-Passwall/openwrt-passwall-packages/archive/refs/heads/main.tar.gz"
+rm -rf passwall-pkg passwall.tar.gz
+if ! wget -q -O passwall.tar.gz \
+	"https://github.com/immortalwrt/openwrt-passwall-packages/archive/refs/heads/openwrt-25.12.tar.gz"; then
+	echo "  · immortalwrt 分支失败，改用 Openwrt-Passwall 主仓"
+	wget -q -O passwall.tar.gz \
+		"https://github.com/Openwrt-Passwall/openwrt-passwall-packages/archive/refs/heads/main.tar.gz"
+fi
 tar -xzf passwall.tar.gz
+
 PKG_DIR=$(find . -path '*/package/passwall' -type d 2>/dev/null | head -1)
 if [ -z "$PKG_DIR" ]; then
-  echo "❌ 没找到 passwall 包目录"
-  exit 1
+	echo "❌ 源码里没找到 package/passwall 目录"
+	exit 1
 fi
 echo "  passwall 包目录：$PKG_DIR"
 
-echo "=== [3/5] cp Lua 脚本到 /usr/share/passwall ==="
-mkdir -p /usr/share/passwall
+echo "=== [2/4] 安装核心文件 ==="
 if [ -d "$PKG_DIR/files/usr/share/passwall" ]; then
-  cp -r "$PKG_DIR/files/usr/share/passwall/"* /usr/share/passwall/
-  chmod +x /usr/share/passwall/*.sh 2>/dev/null || true
-  echo "  ✓ Lua 脚本 cp 完成"
+	mkdir -p /usr/share/passwall
+	cp -r "$PKG_DIR/files/usr/share/passwall/." /usr/share/passwall/
+	chmod +x /usr/share/passwall/*.sh 2>/dev/null || true
+	echo "  ✓ /usr/share/passwall（$(find /usr/share/passwall -type f | wc -l) 个文件）"
 else
-  echo "  ⚠️  files/usr/share/passwall 不存在"
+	echo "  ⚠️  源码里没有 files/usr/share/passwall"
 fi
 
-# UCI 默认配置
 if [ -f "$PKG_DIR/files/etc/config/passwall" ]; then
-  cp "$PKG_DIR/files/etc/config/passwall" /etc/config/passwall
-  echo "  ✓ UCI config cp 完成"
+	# 不覆盖用户已有配置
+	if [ -f /etc/config/passwall ]; then
+		echo "  · /etc/config/passwall 已存在，保留用户配置"
+	else
+		cp "$PKG_DIR/files/etc/config/passwall" /etc/config/passwall
+		echo "  ✓ /etc/config/passwall"
+	fi
 fi
 
-# init 脚本
 if [ -f "$PKG_DIR/files/etc/init.d/passwall" ]; then
-  cp "$PKG_DIR/files/etc/init.d/passwall" /etc/init.d/passwall
-  chmod +x /etc/init.d/passwall
-  echo "  ✓ init.d cp 完成"
+	cp "$PKG_DIR/files/etc/init.d/passwall" /etc/init.d/passwall
+	chmod +x /etc/init.d/passwall
+	echo "  ✓ /etc/init.d/passwall"
 fi
 
-echo "=== [4/5] 注册假包让 opkg 知道 passwall 装了 ==="
-mkdir -p /var/opkg-info
-cat > /var/opkg-info/passwall.control <<'EOF'
-Package: passwall
-Version: 99
-Description: OpenWrt Passwall core (manually installed)
-Maintainer: local
-Section: net
-Priority: optional
-Depends: libc, coreutils
-EOF
-echo "  ✓ /var/opkg-info/passwall.control"
-
-echo "=== [5/5] 装 luci-app-passwall 和 i18n（IB build 预装的） ==="
-# luci-app-passwall.apk 和 luci-i18n-passwall-zh-cn.apk 在 /etc/apk/cache/
-# （IB build 时 inject-passwall.sh 下载进去的）
-ls -la /etc/apk/cache/25.12+_luci-app-passwall*.apk 2>/dev/null || echo "  ⚠️  /etc/apk/cache/ 里没有 luci-app-passwall apk"
-ls -la /etc/apk/cache/25.12+_luci-i18n-passwall*.apk 2>/dev/null || echo "  ⚠️  /etc/apk/cache/ 里没有 i18n apk"
-
-# 装
-opkg update
-opkg install luci-app-passwall
-opkg install luci-i18n-passwall-zh-cn
-
-echo "=== 启 passwall 服务 ==="
-/etc/init.d/passwall enable 2>/dev/null || true
+echo "=== [3/4] 启用服务 ==="
+/etc/init.d/passwall enable  2>/dev/null || true
 /etc/init.d/passwall restart 2>/dev/null || true
+sleep 1
+
+echo "=== [4/4] 验证 ==="
+if [ -f /usr/share/passwall/util.lua ]; then
+	echo "  ✓ 核心文件已就位（/usr/share/passwall/util.lua）"
+else
+	echo "  ⚠️  没找到 /usr/share/passwall/util.lua，核心可能不完整"
+fi
+echo "  passwall 服务状态："
+/etc/init.d/passwall status 2>&1 | head -5 | sed 's/^/    /' || true
 
 echo ""
-echo "=== 验证 ==="
-echo "  passwall 服务状态："
-/etc/init.d/passwall status 2>&1 | head -5
+echo "🎉 装好了。"
+echo "   LuCI 入口：http://192.168.100.1/cgi-bin/luci/admin/services/passwall"
+echo "   在页面里配置节点订阅 / 单个节点 URL，点「保存并应用」。"
 echo ""
-echo "  LuCI 入口：http://192.168.100.1/cgi-bin/luci/admin/services/passwall"
-echo ""
-echo "  🎉 装好了。配置节点订阅 / 单个节点 URL，点 Save & Apply。"
+echo "提示：如果 LuCI 里看不到 Passwall 菜单，强制刷新浏览器（Ctrl+F5）；"
+echo "      仍然没有就执行：rm -f /tmp/luci-indexcache* && /etc/init.d/uhttpd restart"

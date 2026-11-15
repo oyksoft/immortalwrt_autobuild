@@ -202,6 +202,16 @@ for a in r.get('assets', []):
       echo "  ✓ $I18N_FNAME（原名: $I18N_ASSET）"
     fi
   fi
+
+  # 本地包已就位 → 从安装列表里移除同名条目，强制 apk 用我们下的版本。
+  # 原因：官方源的 luci-app-passwall 版本号是 luci 的 commit 版本号（如 26.309.25225），
+  # 语义上比 upstream 的发布号（如 26.11.11）大，apk 会优先选官方源的，
+  # 导致我们下的最新版被忽略（实测装的是 26.10.29-r1 而不是 26.11.11-r1）。
+  if [ -n "$LUCI_ASSET" ] && [ -f "$IB_DIR/packages/${LUCI_ASSET#${VER_PREFIX}}" ]; then
+    grep -vE '^(luci-app-passwall|luci-i18n-passwall-zh-cn)$' packagelist.txt > packagelist.new \
+      && mv packagelist.new packagelist.txt
+    echo "  ✓ 已从安装列表移除同名包，强制使用本地下载的版本（列表共 $(wc -l < packagelist.txt) 项）"
+  fi
 fi
 
 echo "=== [8/9] make package_index ==="
@@ -272,7 +282,7 @@ else
       "$UNSQUASH" -cat /tmp/bbr-root.squashfs etc/board.json 2>/dev/null | head -40 | sed 's/^/      /' || true
       echo "  --- /etc/config/network 内容 ---"
       "$UNSQUASH" -cat /tmp/bbr-root.squashfs etc/config/network 2>/dev/null | head -30 | sed 's/^/      /' || true
-      if "$UNSQUASH" -l /tmp/bbr-root.squashfs 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua|03-lan-ip"; then
+      if "$UNSQUASH" -l /tmp/bbr-root.squashfs 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua|board\.d/03_lan-ip"; then
         FOUND=1
         echo "  ✓ 镜像内含 BBR 页面文件"
       fi

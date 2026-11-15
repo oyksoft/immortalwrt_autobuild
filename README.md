@@ -1,6 +1,6 @@
 # ImmortalWrt Auto-Build
 
-用 GitHub Actions + [ImmortalWrt 官方 ImageBuilder](https://downloads.immortalwrt.org/) 拼固件，**5-8 分钟出货**。
+用 GitHub Actions + [ImmortalWrt 官方 ImageBuilder](https://downloads.immortalwrt.org/) 拼固件，**3-5 分钟出货**。
 
 | 项 | 值 |
 |---|---|
@@ -12,6 +12,7 @@
 | 手动触发 | Actions 页面 → Run workflow |
 | 产物 | Actions Artifact（7 天）+ Release 草稿（publish 后永久） |
 | 镜像大小 | squashfs sysupgrade ≈ 79 MB |
+| 实际耗时 | 3-5 分钟 |
 
 ---
 
@@ -19,12 +20,21 @@
 
 ### 1. 触发构建
 
-<https://github.com/oyksoft/immortalwrt_autobuild/actions> → 选 workflow → **Run workflow**（branch 填 `main`，profile 留空自动检测）→ 等 5-8 分钟。
+<https://github.com/oyksoft/immortalwrt_autobuild/actions> → 选 workflow → **Run workflow**（branch 填 `main`，profile 留空自动检测）→ 等 3-5 分钟。
 
 ### 2. 下载
 
 Artifact（7 天）：run 页面底部 → `immortalwrt-r66s-25.12.2-<run号>` → 解压得到
-`immortalwrt-r66s-25.12.2-N-squashfs-sysupgrade.img.gz`。
+
+```
+immortalwrt-r66s-25.12.2-N-squashfs-sysupgrade.img.gz
+SHA256SUMS                                          ← 校验用
+```
+
+校验：
+```bash
+sha256sum -c SHA256SUMS
+```
 
 Release 草稿（永久）：Releases 页面 → 找到 `R66S 构建 #N` 草稿 → **Publish release**。
 
@@ -42,13 +52,15 @@ sync
 
 ### 4. 装 passwall 核心（只需一次）
 
-固件预装了 Passwall 的 **UI**，但**核心包**（Lua 脚本集）不在任何预编译源里
-（Openwrt-Passwall 仓只 source build），需手动装：
+固件预装了 Passwall 的 **UI**、中文包和各类引擎，但**核心包**（`/usr/share/passwall`
+下的 Lua 脚本集）不在任何预编译源里（Openwrt-Passwall 仓只 source build），需手动装：
 
 ```bash
 ssh root@192.168.100.1
 curl -fsSL https://raw.githubusercontent.com/oyksoft/immortalwrt_autobuild/main/scripts/install-passwall-core.sh | sh
 ```
+
+脚本兼容 apk（25.12+）和 opkg，且不会覆盖你已有的 `/etc/config/passwall`。
 
 ---
 
@@ -142,7 +154,7 @@ TCP 拥塞控制
 
 **为什么用 ImageBuilder 而不是源码编译**：源码编译会卡在 Go 1.22/1.23 要求
 （xray-core、sing-box）、u-boot 必须源码 build、runner 内存只有 7 GB。
-IB 路线全部用预编译包，**零编译**，5-8 分钟出货。
+IB 路线全部用预编译包，**零编译**，3-5 分钟出货。
 
 ### 目录结构
 
@@ -158,12 +170,17 @@ files/
 ├── r66s.config                   完整 .config（PACKAGES 唯一真源）
 ├── r66s.diffconfig               review 用
 └── rootfs/                       注入固件的自定义文件
-    ├── etc/board.d/03-lan-ip     全新安装时把默认 LAN IP 改成 192.168.100.1
+    ├── etc/board.d/03_lan-ip     全新安装时把默认 LAN IP 改成 192.168.100.1
     ├── etc/config/bbr            BBR 加速 UCI 配置
     ├── etc/init.d/bbr            BBR 开机自动应用
     └── usr/lib/lua/luci/…        BBR 加速页面
-R66s/.config                      设备原始 .config
 ```
+
+> `files/rootfs/etc/init.d/bbr` 和 `etc/board.d/03_lan-ip` 在 git 里是 **755**，
+> 其余是 644。Windows 下 `core.filemode=false` 会丢执行位，
+> 改权限用 `git update-index --chmod=+x <文件>`。
+
+> `R66s/.config` 是设备原始配置的本地备份，**不在仓库里**（`.gitignore` 忽略了）。
 
 ---
 
@@ -171,7 +188,7 @@ R66s/.config                      设备原始 .config
 
 ### `files/r66s.config` — 包列表唯一真源
 
-改这个文件 → 触发 build → 5-8 分钟出货。
+改这个文件 → 触发 build → 3-5 分钟出货。
 
 ### `files/rootfs/` — 自定义文件
 
@@ -239,7 +256,7 @@ OpenWrt preinit 阶段（`lib/preinit/82_config_generate`）的流程：
 
 ## CI 校验
 
-CI 会在花 5-8 分钟 build 之前先卡住常见错误：
+CI 会在花 3-5 分钟 build 之前先卡住常见错误：
 
 | 检查 | 手段 | 能抓到什么 |
 |---|---|---|
