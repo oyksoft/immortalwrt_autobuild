@@ -101,12 +101,39 @@ cd "$WORKSPACE"
 
 # 自动查 GitHub API 最新 release，取 tag_name 和对应 apk
 # asset 文件名带 "<BRANCH>_" 前缀（如 25.12+_luci-app-passwall-xxx.apk）
-RELEASE_JSON=$(curl -fsSL --max-time 30 \
-  "https://api.github.com/repos/Openwrt-Passwall/openwrt-passwall/releases/latest" 2>/dev/null || true)
+#
+# 限流问题：匿名调 api.github.com 只有 60 次/小时/IP，Actions runner 共享出口 IP，
+# 连续构建很容易被限流（表现为“查最新 release 失败” + 固件装上旧版 passwall）。
+# 对策：
+#   1. 带 GITHUB_TOKEN（Actions 自动提供），限额 5000/小时
+#   2. 失败重试 3 次
+#   3. 还失败就用 git ls-remote 取版本号（不走 API，无限额），并按规则尝试构造 asset 名
+API_URL="https://api.github.com/repos/Openwrt-Passwall/openwrt-passwall/releases/latest"
+RELEASE_JSON=""
+for try in 1 2 3; do
+  RELEASE_JSON=$(curl -fsSL --max-time 30 \
+    -H "Accept: application/vnd.github+json" \
+    -H "Authorization: Bearer ${GITHUB_TOKEN:-}" \
+    "$API_URL" 2>/dev/null || true)
+  if [ -n "$RELEASE_JSON" ]; then
+    break
+  fi
+  echo "  · GitHub API 第 $try 次失败（可能是限流），重试..."
+  sleep 5
+done
+
 if [ -z "$RELEASE_JSON" ]; then
-  echo "  ⚠️  查最新 release 失败，luci-app-passwall apk 不会下到 IB"
+  echo "  ⚠️  GitHub API 不可用，改用 git ls-remote 取版本号"
+  TAG_NAME=$(git ls-remote --tags --refs https://github.com/Openwrt-Passwall/openwrt-passwall 2>/dev/null \
+    | awk '{print $2}' | sed 's|refs/tags/||' | sort -V | tail -1)
+  [ -n "$TAG_NAME" ] && echo "  · 最新 tag：$TAG_NAME"
 else
-  TAG_NAME=$(echo "$RELEASE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null)
+  TAG_NAME=$(echo "$RELEASE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || true)
+fi
+
+if [ -z "${TAG_NAME:-}" ]; then
+  echo "  ❌ 取不到 passwall 版本号，luci-app-passwall apk 不会下到 IB（将用官方源自带版本）"
+else
   # asset 名前缀用 minor 版本（25.12.2 → 25.12+_），upstream 不带 patch 号
   VER_PREFIX="${BRANCH%.*}+_"
   LUCI_ASSET=$(echo "$RELEASE_JSON" | python3 -c "
@@ -117,7 +144,7 @@ for a in r.get('assets', []):
     n = a.get('name','')
     if n.startswith(prefix + 'luci-app-passwall-') and not n.startswith(prefix + 'luci-app-passwall2'):
         print(n); break
-" 2>/dev/null)
+" 2>/dev/null || true)
   I18N_ASSET=$(echo "$RELEASE_JSON" | python3 -c "
 import sys,json
 r = json.load(sys.stdin)
@@ -126,12 +153,36 @@ for a in r.get('assets', []):
     n = a.get('name','')
     if n.startswith(prefix + 'luci-i18n-passwall-zh-cn-'):
         print(n); break
-" 2>/dev/null)
+" 2>/dev/null || true)
 
   echo "  最新 release：$TAG_NAME"
   echo "  版本前缀：$VER_PREFIX"
   # 写到文件供 release step 用
   echo "$TAG_NAME" > "$WORKSPACE/passwall_version.txt"
+
+  # API 不可用时，按已知规则尝试构造 asset 名（tag 26.11.11-1 → apk 26.11.11-r1）
+  if [ -z "$LUCI_ASSET" ]; then
+    VER="${TAG_NAME%%-*}"
+    for cand in "${VER_PREFIX}luci-app-passwall-${VER}-r1.apk" \
+                "${VER_PREFIX}luci-app-passwall-${VER}.apk"; do
+      if curl -fsSL --max-time 30 -o /dev/null "https://github.com/Openwrt-Passwall/openwrt-passwall/releases/download/${TAG_NAME}/${cand}"; then
+        LUCI_ASSET="$cand"
+        break
+      fi
+    done
+    [ -n "$LUCI_ASSET" ] && echo "  · 兜底匹配到 asset：$LUCI_ASSET"
+  fi
+  if [ -z "$I18N_ASSET" ]; then
+    VER="${TAG_NAME%%-*}"
+    for cand in "${VER_PREFIX}luci-i18n-passwall-zh-cn-${VER}.apk" \
+                "${VER_PREFIX}luci-i18n-passwall-zh-cn-${VER}-r1.apk"; do
+      if curl -fsSL --max-time 30 -o /dev/null "https://github.com/Openwrt-Passwall/openwrt-passwall/releases/download/${TAG_NAME}/${cand}"; then
+        I18N_ASSET="$cand"
+        break
+      fi
+    done
+    [ -n "$I18N_ASSET" ] && echo "  · 兜底匹配到 asset：$I18N_ASSET"
+  fi
 
   if [ -n "$TAG_NAME" ] && [ -n "$LUCI_ASSET" ]; then
     LUCI_URL="https://github.com/Openwrt-Passwall/openwrt-passwall/releases/download/${TAG_NAME}/${LUCI_ASSET}"

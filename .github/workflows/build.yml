@@ -49,6 +49,8 @@ jobs:
         env:
           BRANCH: ${{ inputs.branch || '25.12.2' }}
           USER_PROFILE: ${{ inputs.profile }}
+          # 带上 token 调 GitHub API，避免匿名请求被限流（60 次/小时/IP）
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/build-ib.sh
 
       - name: 读 Passwall 版本（供 release 用）
