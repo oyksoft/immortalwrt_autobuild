@@ -3,11 +3,12 @@
 # 在 R66S 上跑：安装 passwall 核心（/usr/share/passwall 下的 Lua 脚本集）
 #
 # 背景：
-#   固件里已预装 luci-app-passwall（UI）+ luci-i18n-passwall-zh-cn + 各代理引擎
-#   （sing-box / xray-core / hysteria 等）。
-#   但 passwall 核心包不在任何 ImmortalWrt/OpenWrt 预编译仓里——
-#   Openwrt-Passwall 仓只 source build，没有 release apk。
-#   所以这里从 GitHub 拉源码，把文件手动装到系统目录。
+#   固件里的 luci-app-passwall 包本身就包含核心文件（/usr/share/passwall/ 下的
+#   Lua 脚本集）和 /etc/init.d/passwall，装的时候会自动带上——
+#   所以正常情况下【不需要】跑这个脚本。
+#
+#   用途：passwall 页面报错、核心文件损坏时，从 GitHub 拉源码重装一遍。
+#   兼容 apk（OpenWrt 25.12+）和 opkg（旧版）。
 #
 # 兼容 apk（OpenWrt 25.12+）和 opkg（旧版）。
 

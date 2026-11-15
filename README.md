@@ -50,10 +50,13 @@ sync
 
 插卡上电，`http://192.168.100.1`（root / 无密码，建议登录后改）。
 
-### 4. 装 passwall 核心（只需一次）
+### 4. （可选）修复/重装 passwall 核心
 
-固件预装了 Passwall 的 **UI**、中文包和各类引擎，但**核心包**（`/usr/share/passwall`
-下的 Lua 脚本集）不在任何预编译源里（Openwrt-Passwall 仓只 source build），需手动装：
+**一般不需要这一步**——固件里的 `luci-app-passwall` 包**本身就包含**核心文件
+（`/usr/share/passwall/` 下的 Lua 脚本集）和 `/etc/init.d/passwall`，
+装的时候会自动带上。
+
+如果你发现 passwall 页面报错、核心文件损坏，可以用这个脚本重装：
 
 ```bash
 ssh root@192.168.100.1
@@ -72,12 +75,13 @@ curl -fsSL https://raw.githubusercontent.com/oyksoft/immortalwrt_autobuild/main/
   - 已知限制：`luci-i18n-passwall-zh-cn` 会装官方源那份（版本号是 luci commit 号如 `26.309.x`，
     语义上比 upstream 发布号大）。i18n 只是 `.po` 翻译文件，版本滞后不影响功能。
     构建日志的「校验：实际安装的 passwall 版本」会显示实际结果。
+- ✅ **passwall 核心**（`/usr/share/passwall/` 下的 Lua 脚本集）—— **已包含在 luci-app-passwall 包里，
+  自动装好**，无需额外操作
 - ✅ sing-box / xray-core / hysteria / v2ray-plugin 等代理引擎
 - ✅ **BBR 加速**页面（网络 → BBR 加速），**默认开启**
 - ✅ `kmod-tcp-bbr` / `kmod-tcp-hybla` 内核模块
 - ✅ `tc-tiny`（排查网络队列用）
 - ✅ 默认 LAN `192.168.100.1`
-- ❌ passwall 核心包（需手动装，见上）
 
 ---
 
