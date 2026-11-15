@@ -1,104 +1,34 @@
 # ImmortalWrt Auto-Build
 
-利用 GitHub Actions + [ImmortalWrt 官方 ImageBuilder](https://downloads.immortalwrt.org/) 拼固件，5-10 分钟出货。
+用 GitHub Actions + [ImmortalWrt 官方 ImageBuilder](https://downloads.immortalwrt.org/) 拼固件，**5-8 分钟出货**。
 
-- **当前已配置设备**: NanoPi R66S（Rockchip RK3328，ARMv8）
-- **架构**: `main` + GitHub Action ImageBuilder workflow
-- **定时构建**: 每周一 02:00 UTC（北京时间 10:00）
-- **手动触发**: Actions 页面 Run workflow
-- **产物**: GitHub Actions Artifacts（30 天保留，含 sha256）
-
----
-
-## 架构（v2：ImageBuilder 路线）
-
-```
-.github/workflows/build.yml      ← GitHub Action workflow
-├── 装 zstd + apk-tools static 3.0.8
-├── 下 ImmortalWrt IB tarball（72 MB）
-├── 解 IB → 改内置 .config（PART SIZE）→ 重打包
-│                                    ① 解压 IB
-│                                    ② sed 改 .config + ptgen -p 参数
-│                                    ③ tar -cI zstd 重新打包
-├── 解压 IB → 跑 make image
-│   ├── feeds.conf 加 passwall feed（IB 不读但留着）
-│   ├── find R66S profile
-│   ├── grep PACKAGES from files/r66s.config
-│   ├── 下载 GitHub 最新 release → luci-app-passwall + i18n apk
-│   ├── make image PROFILE=lunzn_fastrhino_r66s \
-│   │            PACKAGES=$(... ) \
-│   │            KERNELSIZE=64 ROOTFSPARTSIZE=400 PARTSIZE=480
-│   └── 输出 sysupgrade.img.gz + manifest + SHA256SUMS
-└── 上传 artifact（只 sysupgrade.img.gz 一个文件）
-```
-
-**和 v1 的区别**：
-- v1 用 `make world` 从源码编译 → **1.5-2 h** → 已废弃
-- v2 用 IB 拼装预编译包 → **5-10 min** → 当前
-
-**目录**：
-```
-scripts/
-├── build-ib.sh                   # IB 主逻辑（上面流程）
-└── install-passwall-core.sh     # 刷机后手动装 passwall 核心
-files/
-├── r66s.config                   # R66S 完整 PACKAGES（passwall 全套关掉，只留 UI）
-├── r66s.diffconfig               # review 用
-└── rootfs/                       # 注入固件的自定义文件（IB 会自动合并到 rootfs）
-    ├── etc/config/bbr            # BBR 加速 UCI 配置
-    ├── etc/init.d/bbr            # BBR 开机自动应用
-    └── usr/lib/lua/luci/…        # BBR 加速 LuCI 页面（网络 → BBR 加速）
-.github/workflows/build.yml      # GitHub Action
-```
-
----
-
-## 关键决策与原因
-
-### 为什么用 ImageBuilder（而不是源码编译）
-
-源码编译（`make world`）会卡在：
-- Go 1.23 / 1.22 版本要求（xray-core、sing-box 等 Go 包需要）
-- u-boot / trusted-firmware 必须源码 build（5-10 min）
-- 内存/CPU 受 runner 限制（GitHub-hosted runner 是 4 vCPU / 7 GB RAM）
-
-ImageBuilder 路线绕开这些：
-- 所有包预编译（ImmortalWrt 官方 build server）
-- 不需要 Go toolchain
-- 不需要 build u-boot / firmware（profile 自带下载）
-
-### 为什么 passwall 核心包不在 IB 里
-
-IB tarball 里 `luci-app-passwall` 有（ImmortalWrt 仓），但 **`passwall` 核心包**（Lua 脚本集）**没有**——Openwrt-Passwall 仓只 source build，**没 release pre-built apk**。
-
-**解决**：刷机后跑 `install-passwall-core.sh`（在 R66S 上手动从 GitHub 拉源码 cp）。
+| 项 | 值 |
+|---|---|
+| 设备 | NanoPi R66S（Rockchip RK3328 / RK3568，ARMv8） |
+| 固件版本 | ImmortalWrt 25.12.2（内核 6.12.103） |
+| 分区 | kernel 64 MB + rootfs 400 MB |
+| LAN 网关 | `192.168.100.1`（R66S profile 原生默认值） |
+| 定时构建 | 每周一 02:00 UTC（北京时间 10:00） |
+| 手动触发 | Actions 页面 → Run workflow |
+| 产物 | Actions Artifact（7 天）+ Release 草稿（publish 后永久） |
+| 镜像大小 | squashfs sysupgrade ≈ 79 MB |
 
 ---
 
 ## 快速开始
 
-### 1. 触发 build
+### 1. 触发构建
 
-直接触发 GitHub Actions：
+<https://github.com/oyksoft/immortalwrt_autobuild/actions> → 选 workflow → **Run workflow**（branch 填 `main`，profile 留空自动检测）→ 等 5-8 分钟。
 
-1. https://github.com/oyksoft/immortalwrt_autobuild/actions
-2. 左侧选 `Build ImmortalWrt (ImageBuilder)`
-3. `Run workflow`，branch 选 `main`，profile 留空（默认自动查 R66S）
-4. 5-10 分钟出货
+### 2. 下载
 
-### 2. 下载产物
+Artifact（7 天）：run 页面底部 → `immortalwrt-r66s-25.12.2-<run号>` → 解压得到
+`immortalwrt-r66s-25.12.2-N-squashfs-sysupgrade.img.gz`。
 
-artifact `< 50 MB`，解压得：
+Release 草稿（永久）：Releases 页面 → 找到 `R66S 构建 #N` 草稿 → **Publish release**。
 
-```
-out/
-├── immortalwrt-r66s-25.12.2-N-squashfs-sysupgrade.img.gz   ← 完整 SD 卡镜像
-├── immortalwrt-r66s-25.12.2-N-squashfs-sysupgrade.img.gz.sha256sums
-├── manifest.json
-└── profiles.json
-```
-
-只含 sysupgrade 镜像（**不再打包 IB 全产物**——之前 176 MB artifact 已修复）。
+> 草稿 body 里会显示本次用的 Passwall 版本（带链接），方便核对。
 
 ### 3. 刷 SD 卡
 
@@ -108,140 +38,224 @@ gunzip -c immortalwrt-r66s-25.12.2-N-squashfs-sysupgrade.img.gz | \
 sync
 ```
 
-R66S SD 卡槽插入，上电。`192.168.100.1`（默认 LAN 网关已 patch 改了）。
+插卡上电，`http://192.168.100.1`（root / 无密码，建议登录后改）。
 
-### 4. 刷机后装 passwall 核心
+### 4. 装 passwall 核心（只需一次）
 
-固件已预装：
-- ✅ luci-app-passwall 26.9.16（最新）
-- ✅ luci-i18n-passwall-zh-cn
-- ✅ sing-box、xray-core、hysteria 等引擎
-- ✅ passwall UI 一打开就能看到
-- ❌ passwall 核心（Lua 脚本集）— 需手动装
-
-跑这一条装核心：
+固件预装了 Passwall 的 **UI**，但**核心包**（Lua 脚本集）不在任何预编译源里
+（Openwrt-Passwall 仓只 source build），需手动装：
 
 ```bash
 ssh root@192.168.100.1
 curl -fsSL https://raw.githubusercontent.com/oyksoft/immortalwrt_autobuild/main/scripts/install-passwall-core.sh | sh
 ```
 
-或本地拷过去跑：
+---
 
-```bash
-scp scripts/install-passwall-core.sh root@192.168.100.1:/tmp/
-ssh root@192.168.100.1
-chmod +x /tmp/install-passwall-core.sh
-/tmp/install-passwall-core.sh
+## 固件里有什么
+
+- ✅ **ImmortalWrt 25.12.2** 官方内核与基础系统
+- ✅ **luci-app-passwall** —— 自动取 openwrt-passwall 仓库**最新 release**（带 token 调 API，限流时用 `git ls-remote` 兜底）
+- ✅ sing-box / xray-core / hysteria / v2ray-plugin 等代理引擎
+- ✅ **BBR 加速**页面（网络 → BBR 加速），**默认开启**
+- ✅ `kmod-tcp-bbr` / `kmod-tcp-hybla` 内核模块
+- ✅ `tc-tiny`（排查网络队列用）
+- ✅ 默认 LAN `192.168.100.1`
+- ❌ passwall 核心包（需手动装，见上）
+
+---
+
+## BBR 加速（网络 → BBR 加速）
+
+### 界面
+
+```
+TCP 拥塞控制
+  算法                    [BBR（加速，推荐）▾]
+
+运行状态
+  页面版本                2026-11-15.6
+  当前生效算法            bbr
+  内核可用算法            reno cubic bbr hybla
+  内核默认队列调度        fq_codel
+  各网卡实际调度          br-lan=noqueue  eth0=mq  eth1=mq
+  tcp_bbr 模块            已加载
+```
+
+- **只有一个配置项**：选拥塞控制算法。选 BBR = 开启加速，选 CUBIC = 恢复系统默认
+- 选项来自内核**实际可用**的算法列表（动态读取，不会出现内核里没有的算法）
+- 保存后**立即生效**，无需重启
+
+### 在固件里以什么形式存在
+
+不是 apk 包（软件包列表里看不到），是**注入的裸文件**：
+
+```
+/etc/config/bbr                          UCI 配置（option algorithm 'bbr'）
+/etc/init.d/bbr                          rc.common 脚本（START=98 / STOP=98）
+/etc/rc.d/S98bbr  /etc/rc.d/K98bbr       开机/关机软链（系统自动生成）
+/usr/lib/lua/luci/controller/bbr.lua     LuCI 路由（挂到「网络」菜单）
+/usr/lib/lua/luci/model/cbi/bbr.lua      LuCI 页面本体
+```
+
+而 BBR 内核模块本身来自官方包 `kmod-tcp-bbr`，它会自动装
+`/etc/sysctl.d/12-tcp-bbr.conf`（内容就一行 `net.ipv4.tcp_congestion_control=bbr`），
+**所以固件刷完第一次启动 BBR 就是开着的**。
+
+选了非 BBR 算法时会动态生成 `/etc/sysctl.d/99-bbr-disable.conf` 覆盖它，保证重启后仍保持。
+
+### 技术结论（都是实测/查源码得来的）
+
+| 结论 | 依据 |
+|---|---|
+| **Passwall 没有 BBR 开关** | 源码里只有 TUIC/Naive **节点级** congestion_control，跟路由器本机无关 |
+| 官方**没有**可用的 BBR LuCI 组件 | `luci-app-nps` 是内网穿透；`luci-app-sqm` 只有 QoS；`luci-app-turboacc` 需源码编译且要替换 firewall4/nftables |
+| `net.core.default_qdisc` **改不动** | OpenWrt 由 netifd 接管；写 `fq` 会报 `ENOENT`（见下）；网卡是 `mq`，子队列创建时就定死 |
+| **OpenWrt 内核只有 `fq_codel`** | `CONFIG_NET_SCH_FQ` 未开启 → 写 `fq` 找不到 `sch_fq` 模块 → `ENOENT` |
+| ⚠️ **`fq_codel` ≠ `fq`** | `sch_fq_codel`（Fair Queue+CoDel AQM）和 `sch_fq`（Google Fair Queue，BBR pacing 用）是两个不同模块，名字像而已 |
+| **BBR 不强制需要 fq** | 内核 4.13+ 有 TCP internal pacing 兜底 → `fq_codel + BBR` 是 OpenWrt 上唯一且标准的组合 |
+| BBR 对本固件**有意义** | Passwall 的 sing-box/xray 在路由器本机建连到节点，属 TCP 端点，高延迟丢包线路上收益明显 |
+
+> 官方 FAQ 说"路由器不该开 BBR"——那是针对纯转发场景。本固件跑代理，属于 TCP 端点。
+
+---
+
+## 架构（ImageBuilder 路线）
+
+```
+.github/workflows/build.yml
+├── 校验自定义 Lua（luac5.1 语法 + CBI 冒烟测试）    ← 30 秒拦住 Lua 错误
+├── 跑 scripts/build-ib.sh
+│   ├── [1/9] 下 ImmortalWrt IB tarball（72 MB）
+│   ├── [2/9] 解压
+│   ├── [3/9] 改 IB 内置 .config + ptgen 参数（分区 64+400）
+│   ├── [4/9] 检查 files/rootfs/（要注入的自定义文件）
+│   ├── [5/9] 找 R66S profile
+│   ├── [6/9] 从 files/r66s.config 提取 PACKAGES
+│   ├── [7/9] 下 luci-app-passwall + i18n apk（取最新 release）
+│   ├── [8/9] make package_index
+│   └── [9/9] make image  PROFILE=... PACKAGES=... USER_FILES=files/rootfs
+│              KERNELSIZE=64 ROOTFSPARTSIZE=400 PARTSIZE=480
+│              → 自检：unsquashfs 查镜像里有没有自定义文件
+└── 上传 artifact + 创建 Release 草稿（body 带 Passwall 版本链接）
+```
+
+**为什么用 ImageBuilder 而不是源码编译**：源码编译会卡在 Go 1.22/1.23 要求
+（xray-core、sing-box）、u-boot 必须源码 build、runner 内存只有 7 GB。
+IB 路线全部用预编译包，**零编译**，5-8 分钟出货。
+
+### 目录结构
+
+```
+.github/workflows/build.yml      CI workflow
+scripts/
+├── build-ib.sh                   IB 构建主逻辑
+├── install-passwall-core.sh     刷机后装 passwall 核心
+├── install-bbr-ui.sh             手动安装 BBR 页面（排查固件注入问题时用）
+├── test-bbr-cbi.lua              CBI 冒烟测试（CI 里跑）
+└── diffconfig.sh                 从完整 .config 抽紧凑 diffconfig
+files/
+├── r66s.config                   完整 .config（PACKAGES 唯一真源）
+├── r66s.diffconfig               review 用
+└── rootfs/                       注入固件的自定义文件
+    ├── etc/config/bbr
+    ├── etc/init.d/bbr
+    └── usr/lib/lua/luci/…        BBR 加速页面
+patches/
+└── 001-base-files-default-lan-ip.patch   # 历史遗留，当前未使用
+R66s/.config                      设备原始 .config
 ```
 
 ---
 
 ## 配置
 
-### files/r66s.config — 唯一真源
+### `files/r66s.config` — 包列表唯一真源
 
-PACKAGES 列表（`make image` 时 IB 会装这些）全部从这里提取。
+改这个文件 → 触发 build → 5-8 分钟出货。
 
-调整 firmware = 改这个文件 → 触发 build → 5-10 min 出货。
+### `files/rootfs/` — 自定义文件
 
-### 不用动的东西
+往里丢文件就进固件，**不用改任何脚本**。
 
-| 项 | 说明 |
-|---|---|
-| `.github/workflows/build.yml` | 默认就好（除非换设备） |
-| `scripts/build-ib.sh` | 默认就好（除非加特殊 logic） |
-
-### BBR 加速（网络 → BBR 加速）
-
-固件自带 **BBR 加速** 页面（中文界面）：
-
-- **默认已开启** BBR 拥塞控制算法
-- 页面实时显示：当前生效算法 / 内核可用算法 / 当前队列调度 / tcp_bbr 模块是否加载
-- 可切换算法（BBR / CUBIC / Reno / HYBLA）与队列调度（fq / codel / pfifo_fast）
-- 开关切换**立即生效**，无需重启
-
-> **什么时候有用？**
-> BBR 是 TCP 端点算法，路由器单纯转发时用不到它。但本固件跑 Passwall，
-> sing-box / xray 在路由器本机建立到节点的 TCP 连接——这时候 BBR 对**代理出站链路**
-> 是有效的（高延迟、易丢包的跨境线路收益明显）。
->
-> **注意**
-> - BBR **不强制需要 fq** 队列调度：内核 4.13+ 有 TCP internal pacing 兜底
-> - OpenWrt 内核只编译了 `fq_codel`（`CONFIG_NET_SCH_FQ` 未开启，写 `fq` 会报
->   `ENOENT`），且 `net.core.default_qdisc` 由 netifd 接管不可修改
->   → `fq_codel + BBR` 是 OpenWrt 上唯一且标准的组合，无需也无法调整
-> - ⚠️ **`fq_codel`（FQ-CoDel）和 `fq`（sch_fq）是两个不同的内核模块**，
->   名字相似但完全不是一回事。OpenWrt 只有前者
-> - 与 SQM / Cake 冲突（本固件未装 sqm，无冲突）
-> - 内核模块 `kmod-tcp-bbr` 已在 `files/r66s.config` 里开启
-
-**自定义文件注入机制**：ImageBuilder 支持通过 `USER_FILES` 变量把自定义文件带进固件。
-
-IB 的 Makefile 里 `prepare_rootfs` target 会执行：
+机制是 IB 官方的 `USER_FILES` 变量——IB 的 Makefile 里 `prepare_rootfs` target 会执行：
 
 ```makefile
 $(call prepare_rootfs,$(TARGET_DIR),$(USER_FILES),$(DISABLED_SERVICES))
 ```
 
-所以只要 `make image USER_FILES=<目录>` 即可。`build-ib.sh` 第 [4/9] 步会检查
-`files/rootfs/` 是否存在，并在 [9/9] 步把该目录作为 `USER_FILES` 传入。
-新增自定义文件只需往 `files/rootfs/` 里丢文件，不用改任何脚本。
+`build-ib.sh` 第 [9/9] 步把该目录作为 `USER_FILES` 传给 `make image`。
 
-> **踩过的坑**（都试过，不可行）：
-> - `$(TOPDIR)/files` 机制——那是源码编译版的 `include/image.mk` 里的，IB 没有
-> - 事后拷进 rootfs 目录——`make image` 会重建该目录
-> - 自制 apk 包放进 `packages/`——v2 tar.gz 格式不被 apk 的 `mkndx` 识别
-> - `make install`——IB 没有这个 target
+> **踩过的坑**（都试过，不可行，供参考）：
+> - `$(TOPDIR)/files` —— 那是源码编译版 `include/image.mk` 的机制，IB 没有
+> - 事后拷进 rootfs 目录 —— `make image` 会重建该目录
+> - 自制 apk 包放进 `packages/` —— v2 tar.gz 格式不被 apk 的 `mkndx` 识别
+> - `make install` —— IB 没有这个 target
+> - hook `package_install` —— 插在 `apk add` 之前，仍被覆盖
 
 ### 分区大小
 
 ```
-kernel:  64 MB    ← r66s.config 里 CONFIG_TARGET_KERNEL_PARTSIZE=64
-rootfs: 400 MB   ← r66s.config 里 CONFIG_TARGET_ROOTFS_PARTSIZE=400
+kernel  64 MB   ← CONFIG_TARGET_KERNEL_PARTSIZE=64
+rootfs 400 MB   ← CONFIG_TARGET_ROOTFS_PARTSIZE=400
 ```
 
-`build-ib.sh` 第 [2.5/8] 步会 sed 改 IB 内置 .config 的 `CONFIG_TARGET_*_PARTSIZE` 和 ptgen 的 `-p 16m -p 300m`（IB 默认值），再重打包 tarball。
+IB 默认是 16+300。`build-ib.sh` 第 [3/9] 步会 sed 改 IB 内置 `.config` 的
+`CONFIG_TARGET_*_PARTSIZE` 以及所有用 ptgen 的脚本里的 `-p 16m` / `-p 300m`。
+
+---
+
+## CI 校验
+
+CI 会在花 5-8 分钟 build 之前先卡住常见错误：
+
+| 检查 | 手段 | 能抓到什么 |
+|---|---|---|
+| Lua 语法 | `luac5.1 -p` | 语法错 |
+| CBI 运行时 | `scripts/test-bbr-cbi.lua`（mock 环境实际加载） | `Map.apply` 不存在、`uci.get` 缺 self、默认值不在选项列表内、DummyValue 类型错…… |
+| 自定义文件是否进固件 | `unsquashfs` 查镜像 | 注入机制失效 |
+
+> **自检的坑**：`sysupgrade.img` 是带 u-boot 头/分区的镜像，squashfs 在**偏移 128 MB** 处，
+> 直接 `unsquashfs` 会报 `Can't find a valid SQUASHFS superblock`。
+> 要用 magic `hsqs` 定位偏移再切出来。
 
 ---
 
 ## 支持多设备吗？
 
-**理论上支持，实际上没做适配。**
+**理论上支持，实际没适配。**
 
-`build-ib.sh` 接受 `USER_PROFILE` env var，理论上能 build 任何 ImmortalWrt IB 出的 profile。
+`build-ib.sh` 接受 `USER_PROFILE` 环境变量，理论上能 build 任何 ImmortalWrt IB 出的 profile。
 
 **没适配的地方**：
-- `IB_URL` 写死了 `rockchip/armv8`——其他 arch 设备改 URL 模板就行
-- ptgen 的 `-p 16m -p 300m` sed 假设 RK3568 默认 partition——其他 SoC 不一定是这个
-- `luci-app-passwall` 下载用 GitHub release 通用 URL——跨设备 OK
+- `IB_URL` 写死了 `rockchip/armv8` —— 其他 arch 要改 URL 模板
+- ptgen 的 `-p 16m` / `-p 300m` sed 假设 RK3568 默认分区 —— 其他 SoC 不一定
+- `files/r66s.config` 是 R66S 专用的
 
-**加新设备要做**：
-1. 在 `build-ib.sh` 里加 `BRANCH` 和 `IB_URL` 模板支持参数化
-2. 加 `IB_DIR` / `IB_PROFILE` 检测脚本
-3. 改 `workflow_dispatch` 的 `inputs` 加 `device` 参数
-
-**最简单**：复制 `r66s.config` 到新设备名（`x86_64.config` 等），然后 build-ib.sh 改 URL 生成。
+**加新设备**：复制 `r66s.config` → 改 `build-ib.sh` 的 URL 生成 → 在 workflow 的
+`workflow_dispatch` 加 `device` 参数。
 
 ---
 
 ## 故障排查
 
-| 现象 | 可能原因 | 处理 |
+| 现象 | 原因 | 处理 |
 |---|---|---|
-| 磁盘满 | runner 默认 ~14 GB | 已加 `Free up disk space` 步骤删 dotnet/ghc |
-| 6 小时超时 | 包过多 | 砍包或用 self-hosted runner |
-| `make download` 报 hash mismatch | 上游 URL 变了 | 清 cache 重跑 |
-| passwall apk 装不上 | 文件名 "25.12+_ 前缀" 不匹配 | `install-passwall-core.sh` 里有这逻辑 |
-| `find <profile>` 空 | profile 名错 | 查 IB 里 `.profiles/` 内容 |
+| release body 显示「Passwall: 未获取」 | GitHub API 限流（匿名 60 次/小时/IP，runner 共享 IP） | 已修：带 `GITHUB_TOKEN` + 重试 3 次 + `git ls-remote` 兜底 |
+| 固件里 passwall 版本很旧 | 同上（API 失败时退回官方源自带版本） | 同上；也可看日志「最新 release：xxx」确认 |
+| 「自检失败：自定义文件没进固件」 | `files/rootfs/` 空或 `USER_FILES` 没传 | 看 build 日志 [4/9] 步的文件清单 |
+| LuCI 页面 500 | CBI 运行时错 | CI 的冒烟测试会先抓；本地可 `lua5.1 scripts/test-bbr-cbi.lua` |
+| LuCI 菜单不显示 BBR 加速 | 浏览器缓存 | `rm -f /tmp/luci-indexcache*` + Ctrl+F5 |
+| `make image` 报 `unable to select packages` | 包名不在索引里 | 检查 `packages/` 里的 apk 格式 |
+| BBR 切了不生效 | 模块没加载 | 看页面「tcp_bbr 模块」是否显示"已加载"；`logread -e bbr` 看日志 |
 
 ---
 
 ## 安全
 
-- **私有仓库** 每月 2000 分钟免费（公开无限）。
-- `files/r66s.config` 暴露你启用的所有包。
-- 避免把密钥、API token 写进配置。
+- 仓库设为私有（公开仓库 Actions 分钟数无限，私有 2000 分钟/月）
+- `files/r66s.config` 会暴露你启用的所有包
+- 不要把密钥、API token 写进配置
 
 ---
 
