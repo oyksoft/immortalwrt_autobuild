@@ -158,9 +158,9 @@ files/
 ├── r66s.config                   完整 .config（PACKAGES 唯一真源）
 ├── r66s.diffconfig               review 用
 └── rootfs/                       注入固件的自定义文件
+    ├── etc/board.d/03-lan-ip     全新安装时把默认 LAN IP 改成 192.168.100.1
     ├── etc/config/bbr            BBR 加速 UCI 配置
     ├── etc/init.d/bbr            BBR 开机自动应用
-    ├── etc/uci-defaults/99-lan-ip  首次启动把 LAN IP 改成 192.168.100.1
     └── usr/lib/lua/luci/…        BBR 加速页面
 R66s/.config                      设备原始 .config
 ```
@@ -202,30 +202,38 @@ rootfs 400 MB   ← CONFIG_TARGET_ROOTFS_PARTSIZE=400
 IB 默认是 16+300。`build-ib.sh` 第 [3/9] 步会 sed 改 IB 内置 `.config` 的
 `CONFIG_TARGET_*_PARTSIZE` 以及所有用 ptgen 的脚本里的 `-p 16m` / `-p 300m`。
 
-### LAN IP 为什么用 uci-defaults 改
+### LAN IP 为什么用 board.d 改
 
 OpenWrt 默认 LAN IP 是 `192.168.1.1`（写在 `package/base-files/files/bin/config_generate` 里）。
 
 ImageBuilder 路线**改不了它**——base-files 是预编译 apk，根本没有这个源文件可 patch
 （之前仓库里的 `patches/001-base-files-default-lan-ip.patch` 就是这么失效的，已删除）。
 
-IB 路线下的正确做法：`files/rootfs/etc/uci-defaults/99-lan-ip`，首次启动时改
-`network.lan.ipaddr` 为 `192.168.100.1`。
+**正解是改 `board.json`**——它是 `config_generate` 的数据源。
 
-时序上没问题：`/etc/init.d/boot` 的 `uci_apply_defaults` 按文件名排序执行，
-`02_network`（board.d，生成 lan 段）先跑、`99-lan-ip` 后跑，所以能读到并修改 ipaddr；
-执行完后 `uci commit` 落盘，脚本本身被删除。
+OpenWrt preinit 阶段（`lib/preinit/82_config_generate`）的流程：
 
-**行为**（尊重用户的自定义）：
+```sh
+[ -s /etc/board.json ] || /bin/board_detect    # 跑 /etc/board.d/* 生成 board.json
+[ -s /etc/config/network -a -s /etc/config/system ] && exit 0   # 已有配置就完全不碰
+# 否则用 board.json 里的 ipaddr 生成 /etc/config/network
+```
 
-| 当前 LAN IP | 处理 |
+所以往 board.json 写 `ipaddr` **只影响全新安装**：
+
+| 场景 | 结果 |
 |---|---|
-| `192.168.1.1`（OpenWrt 默认） | → 改成 `192.168.100.1` |
-| `192.168.100.1` | 不动 |
-| `192.168.3.1` 等用户自定义 | **保留不动**（不覆盖用户设置） |
+| 全新刷机（不保留配置） | → `192.168.100.1` |
+| sysupgrade 保留配置（`192.168.3.1`） | → **原样保留** |
+| sysupgrade 保留配置（用户主动设的 `192.168.1.1`） | → **原样保留** |
 
-> sysupgrade 保留配置时，用户的自定义网段不会被覆盖。
-> 脚本只在首次启动执行一次（执行完即删除），以后再刷机也不会重复干预。
+实现：`files/rootfs/etc/board.d/03-lan-ip`（在 `02_network` 之后跑，往 board.json 的
+`network.lan` 写 `ipaddr`）。
+
+> 之前试过用 `uci-defaults` 改 `/etc/config/network` —— 那不行：
+> uci-defaults 在 boot 阶段跑，那时 config 已经生成了，
+> **光看 ipaddr 值区分不出「OpenWrt 默认值」和「用户主动设的同一个值」**，
+> 会把用户保留配置里的自定义网段覆盖掉。
 
 ---
 

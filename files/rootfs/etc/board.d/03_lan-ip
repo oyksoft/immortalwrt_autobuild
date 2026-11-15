@@ -1,0 +1,30 @@
+#!/bin/sh
+# 全新安装时把默认 LAN IP 改成 192.168.100.1
+#
+# 机制（OpenWrt preinit 阶段）：
+#   lib/preinit/82_config_generate → /bin/config_generate：
+#     1. /etc/board.json 不存在 → 跑 board_detect → 执行 /etc/board.d/* → 生成 board.json
+#     2. 若 /etc/config/network 和 /etc/config/system 都已存在 → 直接 exit 0（完全不碰配置）
+#     3. 否则用 board.json 里的 ipaddr 生成 /etc/config/network
+#
+#   所以往 board.json 写 ipaddr 只影响「全新安装」：
+#     - 全新刷机 → 生成 192.168.100.1
+#     - sysupgrade 保留配置 → config_generate 跳过 → 用户设置原样保留
+#       （包括用户主动设成 192.168.1.1 的情况）
+#
+# 为什么不用 uci-defaults 改 config：那样无法区分「OpenWrt 默认值」和
+# 「用户主动设的同一个值」，会覆盖用户的自定义网段。
+#
+# 注意：board.d 脚本是被 source 执行的，不能用 exit（会终止父 shell）。
+
+. /usr/share/libubox/jshn.sh
+
+json_select_object network
+if json_is_a lan object; then
+	json_select_object lan
+	json_add_string ipaddr "192.168.100.1"
+	json_close_object
+fi
+json_close_object
+
+true

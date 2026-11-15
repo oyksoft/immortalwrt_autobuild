@@ -272,7 +272,7 @@ else
       "$UNSQUASH" -cat /tmp/bbr-root.squashfs etc/board.json 2>/dev/null | head -40 | sed 's/^/      /' || true
       echo "  --- /etc/config/network 内容 ---"
       "$UNSQUASH" -cat /tmp/bbr-root.squashfs etc/config/network 2>/dev/null | head -30 | sed 's/^/      /' || true
-      if "$UNSQUASH" -l /tmp/bbr-root.squashfs 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua|99-lan-ip"; then
+      if "$UNSQUASH" -l /tmp/bbr-root.squashfs 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua|03-lan-ip"; then
         FOUND=1
         echo "  ✓ 镜像内含 BBR 页面文件"
       fi
