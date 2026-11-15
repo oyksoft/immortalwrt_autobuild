@@ -1,0 +1,27 @@
+#!/bin/sh
+# 首次启动把 LAN IP 改成 192.168.100.1
+#
+# 为什么需要这个：
+#   ImageBuilder 路线改不了 base-files 里的 config_generate（那是预编译 apk，
+#   没有源文件可 patch），所以改不了 OpenWrt 默认的 LAN IP（192.168.1.1）。
+#   这里用 uci-defaults 在首次启动时改 /etc/config/network。
+#
+# 执行顺序（/etc/init.d/boot 的 uci_apply_defaults 按文件名排序）：
+#   02_network（board.d，生成 network.lan 段）→ 99-lan-ip（本脚本）→ 能读到并修改 ipaddr
+#
+# 注意：本脚本是被 source 执行的，不能用 exit（会终止父 shell），用 true 收尾保证退出码 0。
+
+LAN_IP="192.168.100.1"
+
+current=$(uci -q get network.lan.ipaddr)
+
+if [ -z "$current" ]; then
+	logger -t lan-ip "network.lan.ipaddr 不存在，跳过"
+elif [ "$current" = "$LAN_IP" ]; then
+	logger -t lan-ip "LAN IP 已是 $LAN_IP"
+else
+	uci -q set network.lan.ipaddr="$LAN_IP"
+	logger -t lan-ip "LAN IP: $current -> $LAN_IP"
+fi
+
+true

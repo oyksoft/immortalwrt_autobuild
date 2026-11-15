@@ -7,7 +7,7 @@
 | 设备 | NanoPi R66S（Rockchip RK3328 / RK3568，ARMv8） |
 | 固件版本 | ImmortalWrt 25.12.2（内核 6.12.103） |
 | 分区 | kernel 64 MB + rootfs 400 MB |
-| LAN 网关 | `192.168.100.1`（R66S profile 原生默认值） |
+| LAN 网关 | `192.168.100.1`（首次启动时由 uci-defaults 改，见下） |
 | 定时构建 | 每周一 02:00 UTC（北京时间 10:00） |
 | 手动触发 | Actions 页面 → Run workflow |
 | 产物 | Actions Artifact（7 天）+ Release 草稿（publish 后永久） |
@@ -158,11 +158,10 @@ files/
 ├── r66s.config                   完整 .config（PACKAGES 唯一真源）
 ├── r66s.diffconfig               review 用
 └── rootfs/                       注入固件的自定义文件
-    ├── etc/config/bbr
-    ├── etc/init.d/bbr
+    ├── etc/config/bbr            BBR 加速 UCI 配置
+    ├── etc/init.d/bbr            BBR 开机自动应用
+    ├── etc/uci-defaults/99-lan-ip  首次启动把 LAN IP 改成 192.168.100.1
     └── usr/lib/lua/luci/…        BBR 加速页面
-patches/
-└── 001-base-files-default-lan-ip.patch   # 历史遗留，当前未使用
 R66s/.config                      设备原始 .config
 ```
 
@@ -202,6 +201,20 @@ rootfs 400 MB   ← CONFIG_TARGET_ROOTFS_PARTSIZE=400
 
 IB 默认是 16+300。`build-ib.sh` 第 [3/9] 步会 sed 改 IB 内置 `.config` 的
 `CONFIG_TARGET_*_PARTSIZE` 以及所有用 ptgen 的脚本里的 `-p 16m` / `-p 300m`。
+
+### LAN IP 为什么用 uci-defaults 改
+
+OpenWrt 默认 LAN IP 是 `192.168.1.1`（写在 `package/base-files/files/bin/config_generate` 里）。
+
+ImageBuilder 路线**改不了它**——base-files 是预编译 apk，根本没有这个源文件可 patch
+（之前仓库里的 `patches/001-base-files-default-lan-ip.patch` 就是这么失效的，已删除）。
+
+IB 路线下的正确做法：`files/rootfs/etc/uci-defaults/99-lan-ip`，首次启动时改
+`network.lan.ipaddr` 为 `192.168.100.1`。
+
+时序上没问题：`/etc/init.d/boot` 的 `uci_apply_defaults` 按文件名排序执行，
+`02_network`（board.d，生成 lan 段）先跑、`99-lan-ip` 后跑，所以能读到并修改 ipaddr；
+执行完后 `uci commit` 落盘，脚本本身被删除。
 
 ---
 
