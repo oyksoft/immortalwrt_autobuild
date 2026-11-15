@@ -265,7 +265,7 @@ else
       tail -c +$((OFF + 1)) /tmp/bbr-check.img > /tmp/bbr-root.squashfs 2>/dev/null || true
       echo "  --- 镜像内的 bbr 相关文件 ---"
       "$UNSQUASH" -l /tmp/bbr-root.squashfs 2>/dev/null | grep -iE "bbr" | sed 's/^/      /' || true
-      if "$UNSQUASH" -l /tmp/bbr-root.squashfs 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua"; then
+      if "$UNSQUASH" -l /tmp/bbr-root.squashfs 2>/dev/null | grep -qE "etc/config/bbr|luci/controller/bbr\.lua|luci/model/cbi/bbr\.lua|99-lan-ip"; then
         FOUND=1
         echo "  ✓ 镜像内含 BBR 页面文件"
       fi
