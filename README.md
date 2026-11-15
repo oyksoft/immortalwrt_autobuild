@@ -68,6 +68,10 @@ curl -fsSL https://raw.githubusercontent.com/oyksoft/immortalwrt_autobuild/main/
 
 - ✅ **ImmortalWrt 25.12.2** 官方内核与基础系统
 - ✅ **luci-app-passwall** —— 自动取 openwrt-passwall 仓库**最新 release**（带 token 调 API，限流时用 `git ls-remote` 兜底）
+  - apk 会在所有源里选版本最高的：本地 `26.11.11-r1` > 官方源 `26.10.29-r1` → 用本地最新的 ✔
+  - 已知限制：`luci-i18n-passwall-zh-cn` 会装官方源那份（版本号是 luci commit 号如 `26.309.x`，
+    语义上比 upstream 发布号大）。i18n 只是 `.po` 翻译文件，版本滞后不影响功能。
+    构建日志的「校验：实际安装的 passwall 版本」会显示实际结果。
 - ✅ sing-box / xray-core / hysteria / v2ray-plugin 等代理引擎
 - ✅ **BBR 加速**页面（网络 → BBR 加速），**默认开启**
 - ✅ `kmod-tcp-bbr` / `kmod-tcp-hybla` 内核模块
@@ -189,6 +193,29 @@ files/
 ### `files/r66s.config` — 包列表唯一真源
 
 改这个文件 → 触发 build → 3-5 分钟出货。
+
+> ⚠️ **不要用 `包名=版本` 的语法**（如 `luci-app-passwall=26.11.11-r1`）。
+>
+> IB 的 Makefile 里有这个 bug（`target/imagebuilder/files/Makefile`）：
+>
+> ```makefile
+> define FormatPackages
+> $(foreach pkg, ...,
+>   $(eval pkg_name:=$(firstword $(subst =, ,$(pkg))))
+>   $(if $(findstring =,$(pkg)),$(eval pkg_ver:==$(lastword $(subst =, ,$(pkg)))))  ← eval 不重置
+>   $(pkg_name)$(call GetABISuffix,$(pkg_name))$(pkg_ver)
+> ))
+> ```
+>
+> `pkg_ver` 设在全局且循环里从不清空 → 一旦某个包带 `=版本`，
+> **后面所有包都会继承这个版本约束**，apk 直接报错：
+>
+> ```
+> ERROR: unable to select packages:
+>   libgcc1-14.3.0-r5: breaks: world[libgcc1=26.11.11]
+> ```
+>
+> 所以包列表里只能写纯包名。
 
 ### `files/rootfs/` — 自定义文件
 

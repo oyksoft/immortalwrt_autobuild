@@ -203,33 +203,17 @@ for a in r.get('assets', []):
     fi
   fi
 
-  # 本地包已就位 → 把安装列表里的同名条目换成「包名=版本」形式，
-  # 让 apk 精确选我们下载的本地包。
+  # 注意：不要用「包名=版本」语法强制 apk 选本地包！
+  # IB Makefile 的 FormatPackages 宏有 bug：
+  #     $(eval pkg_ver:=...) 设在全局，循环里从不清空
+  # → 一旦某个包带 =版本，后面所有包都会继承这个版本约束，导致 apk 解析失败：
+  #     ERROR: unable to select packages: libgcc1-14.3.0-r5: breaks: world[libgcc1=26.11.11]
   #
-  # 为什么要加版本约束：
-  #   官方源的 luci-app-passwall 版本号是 luci 的 commit 号（如 26.309.25225），
-  #   语义上比 upstream 的发布号（如 26.11.11）大，不加约束 apk 会优先选官方源的。
-  #
-  # 不能简单从列表里移除：
-  #   IB 只安装 PACKAGES 列表里的包，packages/ 目录里的本地包并不会被自动安装
-  #   （移除 = 根本不装这个包）。
-  if [ -n "$LUCI_ASSET" ] && [ -f "$IB_DIR/packages/${LUCI_ASSET#${VER_PREFIX}}" ]; then
-    LUCI_FNAME="${LUCI_ASSET#${VER_PREFIX}}"
-    LUCI_VER=$(echo "$LUCI_FNAME" | sed 's/^luci-app-passwall-//; s/\.apk$//')
-    grep -v '^luci-app-passwall$' packagelist.txt > packagelist.tmp
-    echo "luci-app-passwall=$LUCI_VER" >> packagelist.tmp
-    mv packagelist.tmp packagelist.txt
-    echo "  ✓ 安装列表改为 luci-app-passwall=$LUCI_VER（强制用本地包）"
-  fi
-  if [ -n "$I18N_ASSET" ] && [ -f "$IB_DIR/packages/${I18N_ASSET#${VER_PREFIX}}" ]; then
-    I18N_FNAME="${I18N_ASSET#${VER_PREFIX}}"
-    I18N_VER=$(echo "$I18N_FNAME" | sed 's/^luci-i18n-passwall-zh-cn-//; s/\.apk$//')
-    grep -v '^luci-i18n-passwall-zh-cn$' packagelist.txt > packagelist.tmp
-    echo "luci-i18n-passwall-zh-cn=$I18N_VER" >> packagelist.tmp
-    mv packagelist.tmp packagelist.tmp2
-    mv packagelist.tmp2 packagelist.txt
-    echo "  ✓ 安装列表改为 luci-i18n-passwall-zh-cn=$I18N_VER（强制用本地包）"
-  fi
+  # 实际行为（apk 会选所有源里版本最高的）：
+  #   luci-app-passwall          本地 26.11.11-r1 > 官方源 26.10.29-r1  → 选本地的 ✔
+  #   luci-i18n-passwall-zh-cn  本地 26.11.11   < 官方源 26.309.25225 → 选官方源的
+  #     （官方源用的是 luci commit 号，语义上更大；i18n 只是 .po 翻译文件，
+  #      版本滞后不影响功能，故不强行干预）
 fi
 
 echo "=== [8/9] make package_index ==="
@@ -267,6 +251,11 @@ if [ "$MAKE_EXIT" -ne 0 ]; then
   echo "❌ make image 失败，exit=$MAKE_EXIT"
   exit "$MAKE_EXIT"
 fi
+
+# 校验实际装上的 passwall 版本（apk 会选所有源里版本最高的那个）
+echo "=== 校验：实际安装的 passwall 版本 ==="
+grep -E "Installing (luci-app-passwall|luci-i18n-passwall-zh-cn) " "$WORKSPACE/output.log" 2>/dev/null \
+  | sed 's/^/  /' || echo "  (日志里没找到，可能包名不在安装列表)"
 
 echo "=== 产物 ==="
 ls -la "$OUTPUT_DIR/" 2>&1 | head -20
