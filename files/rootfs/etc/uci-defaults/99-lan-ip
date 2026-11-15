@@ -1,5 +1,5 @@
 #!/bin/sh
-# 首次启动把 LAN IP 改成 192.168.100.1
+# 首次启动把 LAN IP 从 OpenWrt 默认值改成 192.168.100.1
 #
 # 为什么需要这个：
 #   ImageBuilder 路线改不了 base-files 里的 config_generate（那是预编译 apk，
@@ -9,19 +9,28 @@
 # 执行顺序（/etc/init.d/boot 的 uci_apply_defaults 按文件名排序）：
 #   02_network（board.d，生成 network.lan 段）→ 99-lan-ip（本脚本）→ 能读到并修改 ipaddr
 #
+# 行为：
+#   - 还是 OpenWrt 默认值 192.168.1.1  → 改成 192.168.100.1
+#   - 已经是 192.168.100.1              → 不动
+#   - 用户自定义过（192.168.3.1 等）    → 保留不动，不覆盖用户的设置
+#
 # 注意：本脚本是被 source 执行的，不能用 exit（会终止父 shell），用 true 收尾保证退出码 0。
 
-LAN_IP="192.168.100.1"
+DEFAULT_IP="192.168.1.1"      # OpenWrt 默认
+TARGET_IP="192.168.100.1"     # 本固件的目标
+USER_IP_MARK="lan-ip"
 
 current=$(uci -q get network.lan.ipaddr)
 
 if [ -z "$current" ]; then
-	logger -t lan-ip "network.lan.ipaddr 不存在，跳过"
-elif [ "$current" = "$LAN_IP" ]; then
-	logger -t lan-ip "LAN IP 已是 $LAN_IP"
+	logger -t "$USER_IP_MARK" "network.lan.ipaddr 不存在，跳过"
+elif [ "$current" = "$TARGET_IP" ]; then
+	logger -t "$USER_IP_MARK" "LAN IP 已是 $TARGET_IP"
+elif [ "$current" = "$DEFAULT_IP" ]; then
+	uci -q set network.lan.ipaddr="$TARGET_IP"
+	logger -t "$USER_IP_MARK" "LAN IP: $current -> $TARGET_IP（OpenWrt 默认值，改成本固件约定值）"
 else
-	uci -q set network.lan.ipaddr="$LAN_IP"
-	logger -t lan-ip "LAN IP: $current -> $LAN_IP"
+	logger -t "$USER_IP_MARK" "检测到自定义 LAN IP $current，保留不动"
 fi
 
 true
