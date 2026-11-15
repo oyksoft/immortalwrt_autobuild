@@ -54,45 +54,19 @@ for s in $ptgen_scripts; do
 done
 
 echo "=== [4/9] 注入自定义文件（BBR 加速 UI 等）==="
-# IB 的 rootfs 是 apk 装包生成的（$(TARGET_DIR_ORIG) → $(TARGET_DIR) → 镜像），
-# 源码编译路径用的 prepare_rootfs(..., $(TOPDIR)/files) 在 IB 里不会被调用，
-# 所以文件必须直接进 rootfs 目录。
-cd "$IB_DIR"
-
-# 探测 IB 的 make 变量（make -pn 给的是未展开的定义，用 --eval 拿展开后的值）
-VARS=$(make --eval='print-vars: ; @echo "V_BOARD=$(BOARD)"; echo "V_BUILD_DIR=$(BUILD_DIR)"; echo "V_TARGET_ROOTFS_DIR=$(TARGET_ROOTFS_DIR)"; echo "V_TARGET_DIR_ORIG=$(TARGET_DIR_ORIG)"; echo "V_TARGET_DIR=$(TARGET_DIR)"; echo "V_TOPDIR=$(TOPDIR)"' print-vars 2>/dev/null || true)
-getvar() { echo "$VARS" | grep "^V_$1=" | head -1 | cut -d= -f2- || true; }
-IB_TOPDIR=$(getvar TOPDIR)
-BOARD=$(getvar BOARD)
-TARGET_ROOTFS_DIR=$(getvar TARGET_ROOTFS_DIR)
-TARGET_DIR_ORIG=$(getvar TARGET_DIR_ORIG)
-IB_TARGET_DIR=$(getvar TARGET_DIR)   # 注意：不能叫 TARGET_DIR，脚本顶部已用该名表示输出目录
-[ -n "$IB_TOPDIR" ] || IB_TOPDIR="$IB_DIR"
-# 相对路径补全成绝对路径
-case "$IB_TARGET_DIR" in /*) ;; *) IB_TARGET_DIR="$IB_DIR/$IB_TARGET_DIR" ;; esac
-case "$TARGET_DIR_ORIG" in /*) ;; *) TARGET_DIR_ORIG="$IB_DIR/$TARGET_DIR_ORIG" ;; esac
-echo "  TOPDIR=$IB_TOPDIR"
-echo "  BOARD=$BOARD"
-echo "  IB_TARGET_DIR=$IB_TARGET_DIR"
-echo "  TARGET_DIR_ORIG=$TARGET_DIR_ORIG"
-
-# 顺手把 IB 的相关 Makefile 片段打出来，方便排查
-echo "  --- include/image.mk 里 prepare_rootfs / BuildImage ---"
-grep -n -B3 -A6 "prepare_rootfs" "$IB_DIR/include/image.mk" 2>/dev/null | head -30 | sed 's/^/    /' || true
-grep -n -B2 -A6 "BuildImage" "$IB_DIR/include/image.mk" 2>/dev/null | head -25 | sed 's/^/    /' || true
-echo "  --- include/rootfs.mk 里的 prepare_rootfs ---"
-grep -n -B2 -A10 "define prepare_rootfs" "$IB_DIR/include/rootfs.mk" 2>/dev/null | head -20 | sed 's/^/    /' || true
-echo "  --- rules.mk 里的 target ---"
-grep -nE "^[a-zA-Z_.-]+:" "$IB_DIR/rules.mk" 2>/dev/null | head -20 | sed 's/^/    /' || true
-
-# 方案 A：IB 根目录 files/（万一某些版本会用到，先放上）
-mkdir -p "$IB_TOPDIR/files"
-cp -a "$WORKSPACE/files/rootfs/." "$IB_TOPDIR/files/" 2>/dev/null || true
-chmod +x "$IB_TOPDIR/files/etc/init.d/bbr" 2>/dev/null || true
-
-cd "$WORKSPACE"
-echo "  注入文件清单："
-find "$WORKSPACE/files/rootfs" -type f | sed "s|$WORKSPACE/files/rootfs/|    |"
+# IB Makefile 里的 prepare_rootfs target 会执行：
+#     $(call prepare_rootfs,$(TARGET_DIR),$(USER_FILES),$(DISABLED_SERVICES))
+# 第二个参数就是 USER_FILES，其目录内容会被拷进 rootfs。
+# 所以只要 make image 时传 USER_FILES=<目录> 即可（官方机制）。
+#
+# 注：IB 里没有源码编译版的 $(TOPDIR)/files 机制，也没有 install target；
+#     make image 会重建 rootfs 目录，事后拷文件无效。
+if [ -d "$WORKSPACE/files/rootfs" ]; then
+  echo "  ✓ USER_FILES=$WORKSPACE/files/rootfs"
+  find "$WORKSPACE/files/rootfs" -type f | sed "s|$WORKSPACE/files/rootfs/|    |"
+else
+  echo "  ⚠️  files/rootfs 不存在，固件将不含自定义文件"
+fi
 
 echo "=== [5/9] 找 R66S profile ==="
 if [ -n "${USER_PROFILE:-}" ]; then
@@ -190,20 +164,8 @@ PACKAGES=$(tr '\n' ' ' < packagelist.txt)
 OUTPUT_DIR="$WORKSPACE/$TARGET_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-# --- 注入自定义文件：用 IB 官方的 USER_FILES 变量 ---
-# IB Makefile 里 prepare_rootfs target 会执行：
-#     $(call prepare_rootfs,$(TARGET_DIR),$(USER_FILES),$(DISABLED_SERVICES))
-# 第二个参数就是 USER_FILES，其目录内容会被拷进 rootfs。
-# 所以只要 make image 时传 USER_FILES=<目录> 即可，官方支持的方式。
-# （之前误以为机制是 $(TOPDIR)/files，实际 IB 的 include/image.mk 里并没有 prepare_rootfs）
-echo "  --- 注入自定义文件（USER_FILES）---"
-if [ -d "$WORKSPACE/files/rootfs" ]; then
-  echo "  ✓ USER_FILES=$WORKSPACE/files/rootfs"
-  find "$WORKSPACE/files/rootfs" -type f | sed "s|$WORKSPACE/files/rootfs/|    |"
-else
-  echo "  ⚠️  files/rootfs 不存在"
-fi
-
+# USER_FILES：IB 官方机制，prepare_rootfs 会把它拷进 rootfs
+# （IB Makefile: $(call prepare_rootfs,$(TARGET_DIR),$(USER_FILES),$(DISABLED_SERVICES))）
 cd "$IB_DIR"
 # 硬编码分区大小：IB 不读 r66s.config 里的 CONFIG_TARGET_*_PARTSIZE。
 # - KERNELSIZE：kernel 分区（MB）
@@ -240,23 +202,10 @@ done
 if [ -z "$IMG_CHECK" ]; then
   echo "  ⚠️  找不到 sysupgrade 镜像，跳过自检"
 else
-  # 第二遍 make image 后，rootfs 目录里的文件是否还在
-  if [ -f "$IB_TARGET_DIR/etc/config/bbr" ]; then
-    echo "  · rootfs 目录里文件仍在：$IB_TARGET_DIR/etc/config/bbr"
-  else
-    echo "  ⚠️  rootfs 目录里文件已消失（make image 重建了目录）"
-  fi
-
   # squashfs 是压缩的，strings 搜不到——必须用 unsquashfs 列目录
   FOUND=0
   if [ -n "$UNSQUASH" ]; then
-    echo "  --- 产物目录 ---"
-    ls -lh "$IB_DIR/bin/targets/rockchip/armv8/" 2>/dev/null | head -15 | sed 's/^/    /' || true
-    echo "  --- 镜像文件类型 ---"
-    file "$IMG_CHECK" 2>/dev/null | sed 's/^/    /' || true
     zcat "$IMG_CHECK" > /tmp/bbr-check.img 2>/dev/null || true
-    echo "  --- 镜像头部 ---"
-    od -A x -t x1z -N 32 /tmp/bbr-check.img 2>/dev/null | sed 's/^/    /' || true
     # sysupgrade.img 是带 u-boot 头/分区的镜像，squashfs 不在偏移 0，
     # 用 magic 'hsqs' 定位真正位置
     OFF=$(grep -abo 'hsqs' /tmp/bbr-check.img 2>/dev/null | head -1 | cut -d: -f1)

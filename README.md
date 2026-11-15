@@ -176,10 +176,23 @@ PACKAGES 列表（`make image` 时 IB 会装这些）全部从这里提取。
 > - 与 SQM / Cake 冲突（本固件未装 sqm，无冲突）
 > - 内核模块 `kmod-tcp-bbr` 已在 `files/r66s.config` 里开启
 
-**自定义文件注入机制**：ImageBuilder 会把 IB 根目录下的 `files/` 自动合并进固件 rootfs
-（见 OpenWrt `include/image.mk`：`prepare_rootfs(..., $(TOPDIR)/files)`）。
-`build-ib.sh` 第 [4/9] 步把 `files/rootfs/` 拷进 `$IB_DIR/files/`，所以新增自定义文件只需往
-`files/rootfs/` 里丢文件，不用改任何脚本。
+**自定义文件注入机制**：ImageBuilder 支持通过 `USER_FILES` 变量把自定义文件带进固件。
+
+IB 的 Makefile 里 `prepare_rootfs` target 会执行：
+
+```makefile
+$(call prepare_rootfs,$(TARGET_DIR),$(USER_FILES),$(DISABLED_SERVICES))
+```
+
+所以只要 `make image USER_FILES=<目录>` 即可。`build-ib.sh` 第 [4/9] 步会检查
+`files/rootfs/` 是否存在，并在 [9/9] 步把该目录作为 `USER_FILES` 传入。
+新增自定义文件只需往 `files/rootfs/` 里丢文件，不用改任何脚本。
+
+> **踩过的坑**（都试过，不可行）：
+> - `$(TOPDIR)/files` 机制——那是源码编译版的 `include/image.mk` 里的，IB 没有
+> - 事后拷进 rootfs 目录——`make image` 会重建该目录
+> - 自制 apk 包放进 `packages/`——v2 tar.gz 格式不被 apk 的 `mkndx` 识别
+> - `make install`——IB 没有这个 target
 
 ### 分区大小
 
