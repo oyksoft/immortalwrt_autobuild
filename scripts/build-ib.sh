@@ -203,14 +203,32 @@ for a in r.get('assets', []):
     fi
   fi
 
-  # 本地包已就位 → 从安装列表里移除同名条目，强制 apk 用我们下的版本。
-  # 原因：官方源的 luci-app-passwall 版本号是 luci 的 commit 版本号（如 26.309.25225），
-  # 语义上比 upstream 的发布号（如 26.11.11）大，apk 会优先选官方源的，
-  # 导致我们下的最新版被忽略（实测装的是 26.10.29-r1 而不是 26.11.11-r1）。
+  # 本地包已就位 → 把安装列表里的同名条目换成「包名=版本」形式，
+  # 让 apk 精确选我们下载的本地包。
+  #
+  # 为什么要加版本约束：
+  #   官方源的 luci-app-passwall 版本号是 luci 的 commit 号（如 26.309.25225），
+  #   语义上比 upstream 的发布号（如 26.11.11）大，不加约束 apk 会优先选官方源的。
+  #
+  # 不能简单从列表里移除：
+  #   IB 只安装 PACKAGES 列表里的包，packages/ 目录里的本地包并不会被自动安装
+  #   （移除 = 根本不装这个包）。
   if [ -n "$LUCI_ASSET" ] && [ -f "$IB_DIR/packages/${LUCI_ASSET#${VER_PREFIX}}" ]; then
-    grep -vE '^(luci-app-passwall|luci-i18n-passwall-zh-cn)$' packagelist.txt > packagelist.new \
-      && mv packagelist.new packagelist.txt
-    echo "  ✓ 已从安装列表移除同名包，强制使用本地下载的版本（列表共 $(wc -l < packagelist.txt) 项）"
+    LUCI_FNAME="${LUCI_ASSET#${VER_PREFIX}}"
+    LUCI_VER=$(echo "$LUCI_FNAME" | sed 's/^luci-app-passwall-//; s/\.apk$//')
+    grep -v '^luci-app-passwall$' packagelist.txt > packagelist.tmp
+    echo "luci-app-passwall=$LUCI_VER" >> packagelist.tmp
+    mv packagelist.tmp packagelist.txt
+    echo "  ✓ 安装列表改为 luci-app-passwall=$LUCI_VER（强制用本地包）"
+  fi
+  if [ -n "$I18N_ASSET" ] && [ -f "$IB_DIR/packages/${I18N_ASSET#${VER_PREFIX}}" ]; then
+    I18N_FNAME="${I18N_ASSET#${VER_PREFIX}}"
+    I18N_VER=$(echo "$I18N_FNAME" | sed 's/^luci-i18n-passwall-zh-cn-//; s/\.apk$//')
+    grep -v '^luci-i18n-passwall-zh-cn$' packagelist.txt > packagelist.tmp
+    echo "luci-i18n-passwall-zh-cn=$I18N_VER" >> packagelist.tmp
+    mv packagelist.tmp packagelist.tmp2
+    mv packagelist.tmp2 packagelist.txt
+    echo "  ✓ 安装列表改为 luci-i18n-passwall-zh-cn=$I18N_VER（强制用本地包）"
   fi
 fi
 
