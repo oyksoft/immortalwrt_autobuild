@@ -194,10 +194,16 @@ o.value = function()
 end
 o.description = translate("未加载时无法切换到 BBR。")
 
--- 保存后立即应用（先提交配置文件，再执行 init 脚本）
+-- 保存后立即应用（执行 init 脚本 reload）
 -- 注意：reload 是 rc.common 的标准 action，“apply” 不是
+--
+-- 关键：这里【不能】调用 uci:commit()！
+-- LuCI 的流程是：ListValue:write 把新值存进 /tmp/.uci 暂存区，
+-- 然后由 XHR apply 统一 commit + reload。若在这里提前 commit，
+-- 暂存区被清空，XHR 检查 uci.changes 时看不到变更，会误报
+-- “没有待应用的更改”（实际值早已保存）。
+-- uci get / cursor 能读到暂存值，所以直接 reload 就能拿到新算法立即生效。
 function m.on_commit(self)
-	self.uci:commit("bbr")
 	sh("/etc/init.d/bbr reload >/dev/null 2>&1")
 end
 

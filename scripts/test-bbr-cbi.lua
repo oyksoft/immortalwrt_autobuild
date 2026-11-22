@@ -35,12 +35,16 @@ end
 package.preload["luci.model.uci"] = function()
 	local M = {}
 	local store = { ["bbr.main.algorithm"] = "bbr" }
+	M.commit_calls = 0
 	function M.cursor() return M end
 	function M.get(self, config, section, option)
 		return store[config .. "." .. section .. "." .. option]
 	end
 	function M.set(self, config, section, option, value)
 		store[config .. "." .. section .. "." .. option] = value
+	end
+	function M.commit(self, config)
+		M.commit_calls = M.commit_calls + 1
 	end
 	return M
 end
@@ -88,6 +92,17 @@ local m = chunk()
 ok(m ~= nil, "加载后返回 Map")
 ok(m.config == "bbr", "Map 配置名为 bbr（实际: " .. tostring(m.config) .. "）")
 ok(type(m.on_commit) == "function", "定义了 on_commit hook（LuCI 26 没有 Map.apply）")
+
+-- 关键回归点：on_commit 不能自己 uci:commit()
+-- LuCI 把改动存进 /tmp/.uci 暂存区，由 XHR apply 统一 commit。
+-- 若这里提前 commit，暂存区被清空，XHR 报“没有待应用的更改”。
+if type(m.on_commit) == "function" then
+	local uci = require "luci.model.uci"
+	uci.commit_calls = 0
+	m.on_commit(m)
+	ok(uci.commit_calls == 0,
+		"on_commit 不提前 commit（否则 LuCI 误报“没有待应用的更改”）")
+end
 
 -- 找出各选项
 local function find(name)
