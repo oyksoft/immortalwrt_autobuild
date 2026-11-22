@@ -5,8 +5,8 @@
 # 用法：./scripts/diffconfig.sh <.config 路径> [输出文件]
 set -euo pipefail
 
-CONFIG="${1:-files/.config}"
-OUTPUT="${2:-files/diffconfig}"
+CONFIG="${1:-files/r66s.config}"
+OUTPUT="${2:-files/r66s.diffconfig}"
 
 if [[ ! -f "$CONFIG" ]]; then
   echo "错误：$CONFIG 不存在" >&2

@@ -32,7 +32,20 @@ echo "=== [2/4] 拷贝文件到系统 ==="
 [ -f "$SRC/files/rootfs/etc/config/bbr" ] || { echo "❌ 源文件缺失"; exit 1; }
 # 旧版用 menu.d/*.json 注册菜单，在新版 LuCI 会触发 dispatch 递归，需清掉
 rm -f /usr/share/luci/menu.d/luci-app-bbr.json
+
+# /etc/config/bbr 存的是用户在页面里选的算法，不能覆盖；
+# 先暂存，拷完程序文件再还原。
+BBR_CONF_BAK=""
+if [ -f /etc/config/bbr ]; then
+	BBR_CONF_BAK=$(mktemp /tmp/bbr-conf.XXXXXX)
+	cp /etc/config/bbr "$BBR_CONF_BAK"
+fi
 cp -a "$SRC/files/rootfs/." /
+if [ -n "$BBR_CONF_BAK" ]; then
+	cp "$BBR_CONF_BAK" /etc/config/bbr
+	rm -f "$BBR_CONF_BAK"
+	echo "  · /etc/config/bbr 已存在，保留用户配置"
+fi
 chmod +x /etc/init.d/bbr
 echo "  ✓ 已安装："
 ls -l /etc/config/bbr /etc/init.d/bbr \

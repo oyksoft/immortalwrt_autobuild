@@ -20,9 +20,28 @@ TARGET_DIR="${TARGET_DIR:-out}"
 cd "$WORKSPACE"
 
 echo "=== [1/9] 下 ImageBuilder ==="
-IB_URL="https://downloads.immortalwrt.org/releases/${BRANCH}/targets/rockchip/armv8/immortalwrt-imagebuilder-${BRANCH}-rockchip-armv8.Linux-x86_64.tar.zst"
+IB_BASE="https://downloads.immortalwrt.org/releases/${BRANCH}/targets/rockchip/armv8"
+IB_FILE="immortalwrt-imagebuilder-${BRANCH}-rockchip-armv8.Linux-x86_64.tar.zst"
+IB_URL="${IB_BASE}/${IB_FILE}"
 curl -fsSL "$IB_URL" -o ib.tar.zst
 ls -la ib.tar.zst
+
+# 校验完整性：官方同目录提供 sha256sums，防止下载截断/镜像异常
+if curl -fsSL --max-time 30 "${IB_BASE}/sha256sums" -o ib.sha256sums; then
+  EXPECT=$(awk -v f="$IB_FILE" '$2 == f || $2 == "*" f {print $1; exit}' ib.sha256sums)
+  if [ -n "$EXPECT" ]; then
+    ACTUAL=$(sha256sum ib.tar.zst | awk '{print $1}')
+    if [ "$ACTUAL" != "$EXPECT" ]; then
+      echo "❌ IB 镜像 sha256 校验失败：期望 $EXPECT，实际 $ACTUAL"
+      exit 1
+    fi
+    echo "  ✓ IB 镜像 sha256 校验通过（$ACTUAL）"
+  else
+    echo "  ⚠️  sha256sums 中未找到 $IB_FILE，跳过校验"
+  fi
+else
+  echo "  ⚠️  下载 sha256sums 失败，跳过校验"
+fi
 
 echo "=== [2/9] 解压 ImageBuilder ==="
 mkdir -p ib-extracted

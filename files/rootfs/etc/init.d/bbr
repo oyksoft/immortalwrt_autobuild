@@ -24,12 +24,26 @@ STOP=98
 DISABLE_CONF=/etc/sysctl.d/99-bbr-disable.conf
 
 apply() {
-	local algorithm rc=0
+	local algorithm rc=0 available
 	algorithm=$(uci -q get bbr.main.algorithm)
 	[ -n "$algorithm" ] || algorithm=bbr
 
 	# 加载 bbr 内核模块（kmod-tcp-bbr 有自动探测，这里兜底）
 	modprobe tcp_bbr 2>/dev/null
+
+	# 白名单校验：只接受内核实际支持的算法。
+	# 否则无效值会写进 /etc/sysctl.d/99-bbr-disable.conf（下次启动报错），
+	# 且 LuCI 的 sh() 会吞掉写入 /proc/sys 的错误，用户毫不知情。
+	available=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)
+	if [ -n "$available" ]; then
+		case " $available " in
+			*" $algorithm "*) ;;
+			*)
+				logger -t bbr "invalid algorithm '$algorithm', fallback to cubic (available: $available)"
+				algorithm=cubic
+				;;
+		esac
+	fi
 
 	if [ "$algorithm" = "bbr" ]; then
 		# 选 BBR：移除任何覆盖，用内核自带配置 + 本脚本

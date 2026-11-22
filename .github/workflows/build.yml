@@ -88,7 +88,10 @@ jobs:
             echo "  找到：$IMG"
             cp "$IMG" artifact/
           else
-            echo "  ⚠️  没找到 sysupgrade 镜像——build 可能失败"
+            echo "  ❌ 没找到 sysupgrade 镜像——构建失败"
+            echo "  --- output.log 末尾 ---"
+            tail -40 output.log 2>/dev/null || echo "  (没有 output.log)"
+            exit 1
           fi
           echo '=== artifact/ 内容 ==='
           ls -lh artifact/
