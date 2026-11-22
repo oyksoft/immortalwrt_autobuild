@@ -91,6 +91,9 @@ print("  OK   " .. cbi_path .. " 语法正确")
 local m = chunk()
 ok(m ~= nil, "加载后返回 Map")
 ok(m.config == "bbr", "Map 配置名为 bbr（实际: " .. tostring(m.config) .. "）")
+-- 必须在 parse 阶段同步 commit+apply，保证 on_commit 的 reload 读到新值
+ok(m.apply_on_parse == false,
+	"apply_on_parse=false（commit 先于 on_commit，避免 reload 读到旧值）")
 ok(type(m.on_commit) == "function", "定义了 on_commit hook（LuCI 26 没有 Map.apply）")
 
 -- 关键回归点：on_commit 不能自己 uci:commit()

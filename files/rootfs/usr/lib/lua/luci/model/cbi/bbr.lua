@@ -110,6 +110,11 @@ local function sh(cmd)
 end
 
 m = Map("bbr")
+-- 让 CBI 在 parse 阶段同步 commit + apply（而不是交给 XHR 异步处理）。
+-- 关键：commit 必须发生在 on_commit hook 之前，否则 reload 里的 uci get
+-- 读到的还是旧值（暂存区的新值只有 LuCI cursor 能看到，uci 命令看不到）。
+-- 另外这样也不会触发 XHR 的 "There are no changes to apply" 误报。
+m.apply_on_parse = false
 m.title = translate("BBR 加速")
 m.description = translate("BBR 是 TCP 拥塞控制算法。路由器单纯做转发时用不到它；但当路由器作为代理客户端（本机主动建立到远端的 TCP 连接）时，BBR 能明显改善高延迟、易丢包线路上的吞吐。修改后点「保存并应用」立即生效，无需重启。")
 
@@ -197,12 +202,9 @@ o.description = translate("未加载时无法切换到 BBR。")
 -- 保存后立即应用（执行 init 脚本 reload）
 -- 注意：reload 是 rc.common 的标准 action，“apply” 不是
 --
--- 关键：这里【不能】调用 uci:commit()！
--- LuCI 的流程是：ListValue:write 把新值存进 /tmp/.uci 暂存区，
--- 然后由 XHR apply 统一 commit + reload。若在这里提前 commit，
--- 暂存区被清空，XHR 检查 uci.changes 时看不到变更，会误报
--- “没有待应用的更改”（实际值早已保存）。
--- uci get / cursor 能读到暂存值，所以直接 reload 就能拿到新算法立即生效。
+-- 时序说明（见上方 m.apply_on_parse = false）：
+-- CBI 在 on_commit 之前已经 commit 完毕，所以这里的 uci get
+-- 能读到刚保存的新值，reload 立即生效。
 function m.on_commit(self)
 	sh("/etc/init.d/bbr reload >/dev/null 2>&1")
 end

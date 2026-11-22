@@ -1,0 +1,12 @@
+#!/bin/sh
+# 让 BBR 服务开机自启。
+# bbr 是注入的裸文件（不是 apk 包），没有 postinst 帮忙 enable，
+# 必须手动建 /etc/rc.d/S98bbr，否则：
+#   1. 开机不跑 init，拥塞控制只靠 /etc/sysctl.d/ 的静态文件，
+#      /etc/config/bbr 里选的算法（如 cubic）重启后不生效
+#   2. procd 的 reload trigger 不生效，uci commit 后不会自动 reload
+# uci-defaults 只在首次启动/升级时执行一次，之后不再动用户设置。
+
+/etc/init.d/bbr enable >/dev/null 2>&1
+
+exit 0
